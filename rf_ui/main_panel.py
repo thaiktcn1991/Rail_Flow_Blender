@@ -1,11 +1,47 @@
 """
 Main UI Panel for Rail Flow Blender
 Sidebar panel with drawing mode buttons and settings.
+Redesigned to match Maya Rail Flow structure.
 """
 
 import bpy
 
 
+class RAILFLOW_OT_set_source(bpy.types.Operator):
+    """Set active object as source mesh"""
+    bl_idname = "railflow.set_source"
+    bl_label = "Set Source"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    @classmethod
+    def poll(cls, context):
+        return context.active_object and context.active_object.type == 'MESH'
+
+    def execute(self, context):
+        context.scene.railflow_settings.source_mesh = context.active_object
+        self.report({'INFO'}, f"Source set: {context.active_object.name}")
+        return {'FINISHED'}
+
+
+class RAILFLOW_OT_clear_source(bpy.types.Operator):
+    """Clear source mesh"""
+    bl_idname = "railflow.clear_source"
+    bl_label = "Clear Source"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    @classmethod
+    def poll(cls, context):
+        return context.scene.railflow_settings.source_mesh is not None
+
+    def execute(self, context):
+        context.scene.railflow_settings.source_mesh = None
+        self.report({'INFO'}, "Source cleared")
+        return {'FINISHED'}
+
+
+# ============================================
+# MAIN PANEL
+# ============================================
 class RAILFLOW_PT_main(bpy.types.Panel):
     """Rail Flow main panel"""
     bl_label = "Rail Flow"
@@ -16,84 +52,231 @@ class RAILFLOW_PT_main(bpy.types.Panel):
 
     def draw(self, context):
         layout = self.layout
-
-        # Header
-        box = layout.box()
-        box.label(text="Rail Flow v1.0", icon='MESH_GRID')
-        box.label(text="Retopology Tool")
-
-        # Source mesh info
-        if context.active_object and context.active_object.type == 'MESH':
-            box.label(text=f"Source: {context.active_object.name}", icon='CHECKMARK')
-        else:
-            box.label(text="Select a source mesh", icon='ERROR')
+        layout.label(text="v1.0", icon='MESH_GRID')
 
 
-class RAILFLOW_PT_drawing(bpy.types.Panel):
-    """Drawing modes panel"""
-    bl_label = "Drawing Modes"
-    bl_idname = "RAILFLOW_PT_drawing"
-    bl_space_type = 'VIEW_3D'
-    bl_region_type = 'UI'
-    bl_category = "Rail Flow"
-    bl_parent_id = "RAILFLOW_PT_main"
-
-    def draw(self, context):
-        layout = self.layout
-
-        # Drawing mode buttons
-        col = layout.column(align=True)
-
-        # Poly Draw
-        row = col.row(align=True)
-        row.scale_y = 1.5
-        row.operator("railflow.draw", text="Poly Draw", icon='GREASEPENCIL')
-
-        # Tube
-        row = col.row(align=True)
-        row.scale_y = 1.5
-        row.operator("railflow.tube", text="Tube", icon='MESH_CYLINDER')
-
-        # Placeholder for future modes
-        col.separator()
-        col.label(text="Coming Soon:", icon='TIME')
-        col.label(text="  Bridge Mode")
-        col.label(text="  Fill Hole")
-        col.label(text="  Edge Loop")
-
-
-class RAILFLOW_PT_settings(bpy.types.Panel):
-    """Settings panel"""
-    bl_label = "Settings"
-    bl_idname = "RAILFLOW_PT_settings"
+# ============================================
+# SOURCE MESH (Collapsible)
+# ============================================
+class RAILFLOW_PT_source(bpy.types.Panel):
+    """Source mesh panel"""
+    bl_label = "Source Mesh"
+    bl_idname = "RAILFLOW_PT_source"
     bl_space_type = 'VIEW_3D'
     bl_region_type = 'UI'
     bl_category = "Rail Flow"
     bl_parent_id = "RAILFLOW_PT_main"
     bl_options = {'DEFAULT_CLOSED'}
 
+    def draw_header(self, context):
+        rf = context.scene.railflow_settings
+        if rf.source_mesh is not None:
+            self.layout.label(text="", icon='CHECKMARK')
+        else:
+            self.layout.label(text="", icon='ERROR')
+
     def draw(self, context):
         layout = self.layout
-        scene = context.scene
+        rf = context.scene.railflow_settings
 
-        # Division settings (will be connected to operator properties)
-        col = layout.column()
-        col.label(text="Default Divisions:")
+        if rf.source_mesh is not None:
+            row = layout.row()
+            row.label(text=rf.source_mesh.name)
+            face_count = len(rf.source_mesh.data.polygons)
+            row.label(text=f"({face_count:,} faces)")
+        else:
+            layout.label(text="No source set")
 
-        row = col.row()
-        row.label(text="U:")
-        row.label(text="4")
-        row.label(text="V:")
-        row.label(text="8")
+        row = layout.row(align=True)
+        row.operator("railflow.set_source", text="Set", icon='ADD')
+        row.operator("railflow.clear_source", text="Clear", icon='X')
 
+
+# ============================================
+# DO ON MESH
+# ============================================
+class RAILFLOW_PT_do_on_mesh(bpy.types.Panel):
+    """Drawing modes panel"""
+    bl_label = "Do on Mesh"
+    bl_idname = "RAILFLOW_PT_do_on_mesh"
+    bl_space_type = 'VIEW_3D'
+    bl_region_type = 'UI'
+    bl_category = "Rail Flow"
+    bl_parent_id = "RAILFLOW_PT_main"
+
+    def draw(self, context):
+        layout = self.layout
+        rf = context.scene.railflow_settings
+
+        col = layout.column(align=True)
+
+        # Poly Draw
+        row = col.row(align=True)
+        row.scale_y = 1.5
+        op = row.operator("railflow.draw", text="Poly Draw", icon='GREASEPENCIL',
+                         depress=rf.active_mode == 'POLY_DRAW')
+        op.u_divisions = rf.u_divisions
+        op.v_divisions = rf.v_divisions
+        op.width = rf.width
+        op.snap_to_surface = rf.snap_to_surface
+
+        # Tube
+        row = col.row(align=True)
+        row.scale_y = 1.5
+        op = row.operator("railflow.tube", text="Tube", icon='MESH_CYLINDER',
+                         depress=rf.active_mode == 'TUBE')
+        op.segments = rf.tube_segments
+        op.v_divisions = rf.v_divisions
+        op.radius = rf.tube_radius
+        op.adaptive_radius = rf.adaptive_radius
+
+        # Future modes
         col.separator()
-        col.label(text="Snapping:")
-        col.prop(context.scene, "railflow_snap_enabled", text="Snap to Surface")
+        sub = col.column(align=True)
+        sub.enabled = False
+        sub.scale_y = 1.2
+        sub.operator("railflow.draw", text="Bridge", icon='MOD_SKIN')
+        sub.operator("railflow.draw", text="Fill Hole", icon='MESH_CIRCLE')
+        sub.operator("railflow.draw", text="Edge Loop", icon='MESH_TORUS')
+
+
+# ============================================
+# STROKE SETTINGS
+# ============================================
+class RAILFLOW_PT_stroke_settings(bpy.types.Panel):
+    """Stroke settings panel"""
+    bl_label = "Stroke Settings"
+    bl_idname = "RAILFLOW_PT_stroke_settings"
+    bl_space_type = 'VIEW_3D'
+    bl_region_type = 'UI'
+    bl_category = "Rail Flow"
+    bl_parent_id = "RAILFLOW_PT_main"
+
+    def draw(self, context):
+        layout = self.layout
+        rf = context.scene.railflow_settings
+
+        col = layout.column(align=True)
+        col.prop(rf, "stroke_spacing", text="Spacing")
+        col.prop(rf, "stroke_smooth", text="Smooth")
+        col.prop(rf, "snap_to_surface", text="Snap to Surface")
+
+
+# ============================================
+# MESH SETTINGS
+# ============================================
+class RAILFLOW_PT_mesh_settings(bpy.types.Panel):
+    """Mesh generation settings panel"""
+    bl_label = "Mesh Settings"
+    bl_idname = "RAILFLOW_PT_mesh_settings"
+    bl_space_type = 'VIEW_3D'
+    bl_region_type = 'UI'
+    bl_category = "Rail Flow"
+    bl_parent_id = "RAILFLOW_PT_main"
+
+    def draw(self, context):
+        layout = self.layout
+        rf = context.scene.railflow_settings
+
+        col = layout.column(align=True)
+        row = col.row(align=True)
+        row.prop(rf, "u_divisions", text="U")
+        row.prop(rf, "v_divisions", text="V")
+
+        col.prop(rf, "width", text="Width", slider=True)
+
+
+# ============================================
+# POLY DRAW MODE SETTINGS (shows when active)
+# ============================================
+class RAILFLOW_PT_poly_draw_settings(bpy.types.Panel):
+    """Poly Draw mode specific settings"""
+    bl_label = "Poly Draw Settings"
+    bl_idname = "RAILFLOW_PT_poly_draw_settings"
+    bl_space_type = 'VIEW_3D'
+    bl_region_type = 'UI'
+    bl_category = "Rail Flow"
+    bl_parent_id = "RAILFLOW_PT_main"
+    bl_options = {'DEFAULT_CLOSED'}
+
+    @classmethod
+    def poll(cls, context):
+        rf = context.scene.railflow_settings
+        return rf.active_mode == 'POLY_DRAW'
+
+    def draw(self, context):
+        layout = self.layout
+        rf = context.scene.railflow_settings
+
+        col = layout.column(align=True)
+        row = col.row(align=True)
+        row.prop(rf, "u_divisions", text="U Divisions")
+        row = col.row(align=True)
+        row.prop(rf, "v_divisions", text="V Divisions")
+        col.prop(rf, "width", text="Width", slider=True)
+        col.prop(rf, "snap_to_surface", text="Snap to Surface")
+
+
+# ============================================
+# TUBE MODE SETTINGS (shows when active)
+# ============================================
+class RAILFLOW_PT_tube_settings(bpy.types.Panel):
+    """Tube mode specific settings"""
+    bl_label = "Tube Settings"
+    bl_idname = "RAILFLOW_PT_tube_settings"
+    bl_space_type = 'VIEW_3D'
+    bl_region_type = 'UI'
+    bl_category = "Rail Flow"
+    bl_parent_id = "RAILFLOW_PT_main"
+    bl_options = {'DEFAULT_CLOSED'}
+
+    @classmethod
+    def poll(cls, context):
+        rf = context.scene.railflow_settings
+        return rf.active_mode == 'TUBE'
+
+    def draw(self, context):
+        layout = self.layout
+        rf = context.scene.railflow_settings
+
+        col = layout.column(align=True)
+        col.prop(rf, "tube_segments", text="Segments")
+        col.prop(rf, "v_divisions", text="V Divisions")
+        col.prop(rf, "tube_radius", text="Radius", slider=True)
+        col.prop(rf, "adaptive_radius", text="Adaptive Radius")
+
+
+class RAILFLOW_OT_reload(bpy.types.Operator):
+    """Reload Rail Flow addon"""
+    bl_idname = "railflow.reload"
+    bl_label = "Reload Add-on"
+
+    def execute(self, context):
+        import importlib
+        import sys
+
+        # Unregister
+        from .. import rf_operators, rf_ui
+        rf_ui.unregister()
+        rf_operators.unregister()
+
+        # Reload modules
+        modules_to_reload = [key for key in sys.modules.keys() if 'Rail_Flow_Blender' in key]
+        for mod_name in modules_to_reload:
+            if mod_name in sys.modules:
+                importlib.reload(sys.modules[mod_name])
+
+        # Re-register
+        rf_operators.register()
+        rf_ui.register()
+
+        self.report({'INFO'}, "Rail Flow reloaded!")
+        return {'FINISHED'}
 
 
 class RAILFLOW_PT_help(bpy.types.Panel):
     """Help panel"""
-    bl_label = "Help"
+    bl_label = "Help & Info"
     bl_idname = "RAILFLOW_PT_help"
     bl_space_type = 'VIEW_3D'
     bl_region_type = 'UI'
@@ -104,24 +287,145 @@ class RAILFLOW_PT_help(bpy.types.Panel):
     def draw(self, context):
         layout = self.layout
 
-        col = layout.column()
-        col.label(text="Instructions:", icon='QUESTION')
-        col.label(text="1. Select source mesh")
-        col.label(text="2. Click drawing mode")
-        col.label(text="3. LMB drag to draw")
-        col.label(text="4. ENTER to confirm")
-        col.label(text="5. ESC to cancel")
+        # Poly Draw instructions
+        box = layout.box()
+        box.label(text="Poly Draw Mode", icon='GREASEPENCIL')
+        col = box.column(align=True)
+        col.label(text="1 stroke = Single Rail")
+        col.label(text="2+ strokes = Multi Rail")
 
-        col.separator()
-        col.label(text="Shortcuts:", icon='EVENT_RETURN')
-        col.label(text="  [ / ] : Adjust divisions")
-        col.label(text="  RMB : Clear stroke")
+        # Controls
+        box = layout.box()
+        box.label(text="Controls", icon='MOUSE_LMB')
+        col = box.column(align=True)
+        col.scale_y = 0.9
+
+        row = col.row()
+        row.label(text="LMB Drag", icon='MOUSE_LMB')
+        row.label(text="Draw stroke")
+
+        row = col.row()
+        row.label(text="Enter", icon='EVENT_RETURN')
+        row.label(text="Generate mesh")
+
+        row = col.row()
+        row.label(text="RMB", icon='MOUSE_RMB')
+        row.label(text="Clear strokes")
+
+        row = col.row()
+        row.label(text="Esc", icon='EVENT_ESC')
+        row.label(text="Cancel")
+
+        # Developer section
+        layout.separator()
+        row = layout.row()
+        row.operator("railflow.reload", text="Reload Add-on", icon='FILE_REFRESH')
+
+
+class RailFlowSettings(bpy.types.PropertyGroup):
+    """Rail Flow settings stored in scene"""
+
+    # Source mesh reference
+    source_mesh: bpy.props.PointerProperty(
+        name="Source Mesh",
+        description="Source mesh for retopology",
+        type=bpy.types.Object,
+        poll=lambda self, obj: obj.type == 'MESH'
+    )
+
+    # Active mode tracking
+    active_mode: bpy.props.EnumProperty(
+        name="Active Mode",
+        description="Currently active drawing mode",
+        items=[
+            ('NONE', "None", "No mode active"),
+            ('POLY_DRAW', "Poly Draw", "Poly Draw mode"),
+            ('TUBE', "Tube", "Tube mode"),
+        ],
+        default='NONE'
+    )
+
+    # Stroke settings
+    stroke_spacing: bpy.props.FloatProperty(
+        name="Stroke Spacing",
+        description="Minimum distance between stroke points",
+        default=0.01,
+        min=0.001, max=1.0,
+        step=1,
+        precision=3
+    )
+    stroke_smooth: bpy.props.IntProperty(
+        name="Stroke Smooth",
+        description="Smoothing iterations for stroke",
+        default=0,
+        min=0, max=10
+    )
+
+    # Division settings
+    u_divisions: bpy.props.IntProperty(
+        name="U Divisions",
+        description="Divisions across width",
+        default=4,
+        min=1, max=32
+    )
+    v_divisions: bpy.props.IntProperty(
+        name="V Divisions",
+        description="Divisions along length",
+        default=8,
+        min=2, max=64
+    )
+
+    # Size settings
+    width: bpy.props.FloatProperty(
+        name="Width",
+        description="Patch width",
+        default=0.5,
+        min=0.01, max=10.0,
+        step=10,
+        precision=2
+    )
+
+    # Tube settings
+    tube_radius: bpy.props.FloatProperty(
+        name="Tube Radius",
+        description="Radius of tube mesh",
+        default=0.1,
+        min=0.001, max=10.0,
+        step=1,
+        precision=3
+    )
+    tube_segments: bpy.props.IntProperty(
+        name="Tube Segments",
+        description="Segments around tube circumference",
+        default=8,
+        min=3, max=32
+    )
+
+    # Snapping settings
+    snap_to_surface: bpy.props.BoolProperty(
+        name="Snap to Surface",
+        description="Snap vertices to source mesh surface",
+        default=True
+    )
+    adaptive_radius: bpy.props.BoolProperty(
+        name="Adaptive Radius",
+        description="Calculate tube radius based on surface thickness",
+        default=False
+    )
 
 
 classes = [
+    RailFlowSettings,
+    RAILFLOW_OT_set_source,
+    RAILFLOW_OT_clear_source,
+    RAILFLOW_OT_reload,
     RAILFLOW_PT_main,
-    RAILFLOW_PT_drawing,
-    RAILFLOW_PT_settings,
+    RAILFLOW_PT_source,
+    RAILFLOW_PT_do_on_mesh,
+    RAILFLOW_PT_stroke_settings,
+    RAILFLOW_PT_mesh_settings,
+    RAILFLOW_PT_poly_draw_settings,
+    RAILFLOW_PT_tube_settings,
     RAILFLOW_PT_help,
 ]
 
@@ -130,17 +434,13 @@ def register():
     for cls in classes:
         bpy.utils.register_class(cls)
 
-    # Register scene properties
-    bpy.types.Scene.railflow_snap_enabled = bpy.props.BoolProperty(
-        name="Snap to Surface",
-        default=True,
-        description="Snap vertices to source mesh surface"
-    )
+    # Register settings property group
+    bpy.types.Scene.railflow_settings = bpy.props.PointerProperty(type=RailFlowSettings)
 
 
 def unregister():
-    # Unregister scene properties
-    del bpy.types.Scene.railflow_snap_enabled
+    # Unregister settings
+    del bpy.types.Scene.railflow_settings
 
     for cls in reversed(classes):
         bpy.utils.unregister_class(cls)

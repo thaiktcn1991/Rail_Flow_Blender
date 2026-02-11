@@ -88,6 +88,77 @@ def generate_quad_patch(stroke_points, u_divisions=4, v_divisions=8,
     return obj
 
 
+def generate_multi_rail_patch(strokes, v_divisions=8,
+                               source_obj=None, snap_to_surface=True):
+    """
+    Generate a quad mesh patch between multiple strokes (multi-rail).
+
+    Args:
+        strokes: List of strokes (each stroke is list of points)
+        v_divisions: Number of divisions along length
+        source_obj: Source mesh for surface snapping
+        snap_to_surface: Whether to snap vertices to source surface
+
+    Returns:
+        Created Blender mesh object
+    """
+    if len(strokes) < 2:
+        return None
+
+    # Resample all strokes to same number of points
+    resampled_strokes = []
+    for stroke in strokes:
+        if len(stroke) >= 2:
+            resampled = geo.resample_curve(stroke, v_divisions + 1)
+            resampled_strokes.append(resampled)
+
+    if len(resampled_strokes) < 2:
+        return None
+
+    u_divisions = len(resampled_strokes) - 1  # Number of strokes - 1
+
+    # Generate vertex grid by interpolating between strokes
+    vertices = []
+
+    for i in range(v_divisions + 1):  # Along length
+        for j, stroke in enumerate(resampled_strokes):  # Across strokes
+            vert_pos = Vector(stroke[i])
+
+            # Snap to surface if enabled
+            if snap_to_surface and source_obj is not None:
+                result = acceleration.closest_point_on_mesh(source_obj, vert_pos)
+                if result is not None:
+                    location, normal, index, distance = result
+                    if distance < 1.0:  # Only snap if close enough
+                        vert_pos = source_obj.matrix_world @ location
+
+            vertices.append(vert_pos)
+
+    # Generate faces (quads)
+    faces = []
+    num_strokes = len(resampled_strokes)
+
+    for i in range(v_divisions):
+        for j in range(num_strokes - 1):
+            # Quad vertices (CCW winding)
+            v0 = i * num_strokes + j
+            v1 = v0 + 1
+            v2 = v1 + num_strokes
+            v3 = v0 + num_strokes
+            faces.append((v0, v1, v2, v3))
+
+    # Create Blender mesh
+    mesh = bpy.data.meshes.new("MultiRailPatch")
+    mesh.from_pydata(vertices, [], faces)
+    mesh.update()
+
+    # Create object
+    obj = bpy.data.objects.new("MultiRailPatch", mesh)
+    bpy.context.collection.objects.link(obj)
+
+    return obj
+
+
 def generate_tube(stroke_points, segments=8, v_divisions=8,
                   radius=0.1, source_obj=None, adaptive_radius=False):
     """
