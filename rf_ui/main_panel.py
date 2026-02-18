@@ -161,6 +161,12 @@ class RAILFLOW_PT_source(bpy.types.Panel):
         if op:
             pass # No specific properties to set for this operator in the UI
         
+        # Exit Button
+        if rf.active_mode != 'NONE':
+            layout.separator()
+            row = layout.row()
+            row.operator("railflow.exit_tool", text="EXIT CURRENT TOOL", icon='X')
+        
         layout.separator()
         col = layout.column(align=True)
         row = col.row(align=True)
@@ -309,7 +315,9 @@ class RAILFLOW_PT_mesh_operations(bpy.types.Panel):
             # or it can be a separate operator that starts the modal with selection.
             b_row = b_col.row(align=True)
             b_row.scale_y = 1.2
-            b_row.operator("railflow.bridge_confirm", text="Confirm Selection", icon='CHECKMARK')
+            op = b_row.operator("railflow.bridge_confirm", text="Confirm Selection", icon='CHECKMARK')
+            if op:
+                pass
             
             b_col.separator()
             b_col.label(text="Connection Mode:")
@@ -481,6 +489,43 @@ class RAILFLOW_PT_help(bpy.types.Panel):
 
 
 
+# ============================================
+# TECHNICAL PROTOCOLS (Theory Reminder)
+# ============================================
+class RAILFLOW_PT_protocols(bpy.types.Panel):
+    """Technical Protocols panel (Reminder for AI/User)"""
+    bl_label = "Technical Protocols"
+    bl_idname = "RAILFLOW_PT_protocols"
+    bl_space_type = 'VIEW_3D'
+    bl_region_type = 'UI'
+    bl_category = "Rail Flow"
+    bl_parent_id = "RAILFLOW_PT_main"
+    bl_options = {'DEFAULT_CLOSED'}
+
+    def draw(self, context):
+        layout = self.layout
+        box = layout.box()
+        col = box.column(align=True)
+        col.label(text="🛡️ MODE INTEGRITY PROTOCOL", icon='SHIELD')
+        col.separator()
+        col.label(text="1. STICK TO ACTIVE MODE")
+        col.label(text="   Fixing Bridge must NOT break Poly Draw.")
+        col.label(text="2. ESCAPE TO LOCK")
+        col.label(text="   Press ESC to exit mode & lock meshes.")
+        col.label(text="3. UNIQUE METADATA")
+        col.label(text="   Each mode creates unique mesh tags.")
+        col.separator()
+        col.label(text="🇻🇳 Always communicate in VIETNAMESE.")
+
+class RAILFLOW_OT_exit_tool(bpy.types.Operator):
+    """Reset active mode to NONE"""
+    bl_idname = "railflow.exit_tool"
+    bl_label = "Exit Tool"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    def execute(self, context):
+        context.scene.railflow_settings.active_mode = 'NONE'
+        return {'FINISHED'}
 
 classes = [
     RAILFLOW_OT_set_source,
@@ -488,6 +533,7 @@ classes = [
     RAILFLOW_OT_set_source_confirm,
     RAILFLOW_OT_clear_source,
     RAILFLOW_OT_reload,
+    RAILFLOW_OT_exit_tool,
     RAILFLOW_PT_main,
     RAILFLOW_PT_source,
     RAILFLOW_PT_settings,
@@ -497,6 +543,7 @@ classes = [
     RAILFLOW_PT_stroke_settings,
     RAILFLOW_PT_mesh_options,
     RAILFLOW_PT_help,
+    RAILFLOW_PT_protocols,
 ]
 
 

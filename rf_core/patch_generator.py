@@ -156,7 +156,7 @@ def generate_quad_patch(stroke_points, u_divisions=4, v_divisions=8,
 
 
 def generate_multi_rail_patch(strokes, u_divisions=1, v_divisions=8,
-                               source_obj=None, snap_to_surface=True, segmented=False):
+                               source_obj=None, snap_to_surface=True, segmented=False, mesh_type="POLY_MULTI"):
     """
     Generate a quad mesh patch between multiple strokes (multi-rail).
     """
@@ -284,7 +284,7 @@ def generate_multi_rail_patch(strokes, u_divisions=1, v_divisions=8,
 
     # Store metadata
     store_metadata(obj, {
-        "type": "MULTI_RAIL",
+        "type": mesh_type,
         "strokes": strokes,
         "u_divisions": u_divisions, # Store U Divisions
         "v_divisions": v_divisions,
@@ -618,18 +618,21 @@ def rebuild_mesh(obj):
                 new_data = temp_obj.data
                 bpy.data.objects.remove(temp_obj, do_unlink=True)
 
-        elif mesh_type == "MULTI_RAIL":
+        elif mesh_type in ["MULTI_RAIL", "POLY_MULTI", "BRIDGE_CHAIN"]:
             strokes = [[Vector(v) for v in s] for s in obj["strokes"]]
             
             # Default to 1 if not present (legacy support)
             u_div = obj.get("u_divisions", 1) 
+            is_segmented = (mesh_type == "BRIDGE_CHAIN")
             
             temp_obj = generate_multi_rail_patch(
                 strokes=strokes,
                 u_divisions=u_div,
                 v_divisions=obj["v_divisions"],
                 source_obj=source_obj,
-                snap_to_surface=obj.get("snap_to_surface", True)
+                snap_to_surface=obj.get("snap_to_surface", True),
+                segmented=is_segmented,
+                mesh_type=mesh_type
             )
             if temp_obj:
                 new_data = temp_obj.data

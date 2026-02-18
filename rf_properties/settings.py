@@ -3,7 +3,7 @@ from ..rf_core import patch_generator
 
 # Map Active Mode to Mesh Type for smart updates
 MODE_TO_TYPE_MAP = {
-    'POLY_DRAW': ['SINGLE_RAIL', 'MULTI_RAIL'],
+    'POLY_DRAW': ['SINGLE_RAIL', 'POLY_MULTI'],
     'TUBE': ['TUBE'],
     'POLYGON': ['POLYGON'],
     'VBRIDGE': ['BRIDGE', 'BRIDGE_CHAIN'],

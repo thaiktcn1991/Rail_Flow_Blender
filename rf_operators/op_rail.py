@@ -102,6 +102,7 @@ class RAILFLOW_OT_draw(bpy.types.Operator):
                         last_point = Vector(self._current_stroke[-1])
                         if (Vector(point) - last_point).length > 0.01:
                             self._current_stroke.append(point)
+                return {'RUNNING_MODAL'}
 
         # Left mouse
         elif event.type == 'LEFTMOUSE':
@@ -130,6 +131,7 @@ class RAILFLOW_OT_draw(bpy.types.Operator):
                     if rf.active_mode in {'VBRIDGE', 'POLYGON'} and len(self._strokes) >= 1:
                         self.generate_mesh(context)
                 self._current_stroke = []
+                return {'RUNNING_MODAL'}
 
         # Enter
         elif event.type in {'RET', 'NUMPAD_ENTER'}:
@@ -138,8 +140,9 @@ class RAILFLOW_OT_draw(bpy.types.Operator):
             self.cleanup(context)
             return {'FINISHED'}
 
-        # Escape
+        # Escape - Reset mode to NONE to lock meshes
         elif event.type == 'ESC':
+            context.scene.railflow_settings.active_mode = 'NONE'
             self.cleanup(context)
             return {'CANCELLED'}
 
@@ -166,12 +169,13 @@ class RAILFLOW_OT_draw(bpy.types.Operator):
                 context.area.header_text_set(f"U Divisions: {self.u_divisions}")
             return {'RUNNING_MODAL'}
 
-        # Right click
+        # Right click - Clear strokes
         elif event.type == 'RIGHTMOUSE' and event.value == 'PRESS':
             self._strokes = []
             self._current_stroke = []
+            return {'RUNNING_MODAL'}
 
-        return {'RUNNING_MODAL'}
+        return {'PASS_THROUGH'}
 
     def get_surface_point(self, context, event):
         if self._source_obj is None:
@@ -222,7 +226,8 @@ class RAILFLOW_OT_draw(bpy.types.Operator):
                         v_divisions=rf.v_divisions,
                         source_obj=self._source_obj if self.snap_to_surface else None,
                         snap_to_surface=rf.snap_to_surface,
-                        segmented=True # BRIDGE MUST BE SEGMENTED
+                        segmented=True, # BRIDGE MUST BE SEGMENTED
+                        mesh_type="BRIDGE_CHAIN" # UNIQUE TAG
                     )
                     
                     if obj is not None:
@@ -268,7 +273,8 @@ class RAILFLOW_OT_draw(bpy.types.Operator):
                     u_divisions=self.u_divisions,
                     v_divisions=self.v_divisions,
                     source_obj=self._source_obj if self.snap_to_surface else None,
-                    snap_to_surface=self.snap_to_surface
+                    snap_to_surface=self.snap_to_surface,
+                    mesh_type="POLY_MULTI" # UNIQUE TAG
                 )
                 if obj is not None:
                     # NITRO RECYCLING: Delete previous mesh in this session
@@ -296,6 +302,7 @@ class RAILFLOW_OT_draw(bpy.types.Operator):
         shader = gpu.shader.from_builtin('UNIFORM_COLOR')
         gpu.state.line_width_set(3.0)
         gpu.state.blend_set('ALPHA')
+        gpu.state.depth_test_set('ALWAYS') # Ensure strokes are always visible
 
         colors = [
             (1.0, 0.5, 0.0, 0.8),  # Orange
@@ -330,6 +337,7 @@ class RAILFLOW_OT_draw(bpy.types.Operator):
             shader.uniform_float("color", (1.0, 1.0, 0.0, 1.0))
             batch_points.draw(shader)
 
+        gpu.state.depth_test_set('LESS')
         gpu.state.blend_set('NONE')
         gpu.state.line_width_set(1.0)
         gpu.state.point_size_set(1.0)
