@@ -2,6 +2,18 @@
 # Ported from Rail Flow Maya by ThaiLuong
 # License: GPL-3.0
 
+################################################################################
+# 🛡️ AI PRE-DEBUG CHECKPOINT: BLENDER UI & LOGIC INTEGRITY
+# ------------------------------------------------------------------------------
+# TRƯỚC KHI SỬA BẤT KỲ LỖI NÀO, BẠN BẮT BUỘC PHẢI ĐỌC CÁC FILE CẨM NANG SAU:
+# 1. [SMART_DEV_HANDBOOK.md](file:///d:/Google_AntiGravity/scratch/Rail_Flow_Blender/docs/AI_ONBOARDING_STANDARDS/SMART_DEV_HANDBOOK.md)
+# 2. [COLLABORATION_PROTOCOL.md](file:///d:/Google_AntiGravity/scratch/Rail_Flow_Blender/docs/AI_ONBOARDING_STANDARDS/COLLABORATION_PROTOCOL.md)
+# 3. [DAILY_DEVELOPMENT_LOG.md](file:///d:/Google_AntiGravity/scratch/Rail_Flow_Blender/docs/notes/DAILY_DEVELOPMENT_LOG.md)
+# ------------------------------------------------------------------------------
+# 🇻🇳 NGÔN NGỮ: TIẾNG VIỆT LÀ BẮT BUỘC.
+# 🏗️ KIẾN TRÚC: TUÂN THỦ MODULAR (UI tách biệt hoàn toàn CORE).
+# ################################################################################
+
 bl_info = {
     "name": "Rail Flow",
     "author": "ThaiLuong (thaiktcn1991)",

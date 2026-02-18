@@ -38,6 +38,7 @@ class RAILFLOW_OT_tube(bpy.types.Operator):
 
     _stroke_points = []
     _is_drawing = False
+    _active_obj = None
     _source_obj = None
     _draw_handler = None
 
@@ -168,10 +169,28 @@ class RAILFLOW_OT_tube(bpy.types.Operator):
         )
 
         if obj is not None:
+            # NITRO RECYCLING
+            if self._active_obj:
+                data = self._active_obj.data
+                bpy.data.objects.remove(self._active_obj, do_unlink=True)
+                if data.users == 0:
+                    bpy.data.meshes.remove(data)
+            
+            self._active_obj = obj
+            
+            # NITRO SMART NORMAL
+            if self._source_obj:
+                patch_generator.enforce_outward_normals(obj, self._source_obj)
+                
             bpy.ops.object.select_all(action='DESELECT')
             obj.select_set(True)
             context.view_layer.objects.active = obj
             self.report({'INFO'}, f"Created tube with {len(obj.data.polygons)} faces")
+        
+        # Don't clear stroke points here if you want post-draw slider updates?
+        # Actually Tube uses its own radius/segments props which update the mesh.
+        # If we clear strokes, we can't rebuild!
+        # Reversion: Keep strokes until next draw.
 
     def draw_callback(self):
         if len(self._stroke_points) < 2:
@@ -202,10 +221,11 @@ class RAILFLOW_OT_tube(bpy.types.Operator):
             bpy.types.SpaceView3D.draw_handler_remove(self._draw_handler, 'WINDOW')
             self._draw_handler = None
 
-        context.scene.railflow_settings.active_mode = 'NONE'
+        # context.scene.railflow_settings.active_mode = 'NONE' # Don't reset to allow post-draw editing
         context.area.header_text_set(None)
         self._stroke_points = []
         self._is_drawing = False
+        self._active_obj = None
 
 
 def register():

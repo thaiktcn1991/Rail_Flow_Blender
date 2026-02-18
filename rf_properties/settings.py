@@ -1,19 +1,49 @@
 import bpy
 from ..rf_core import patch_generator
 
+# Map Active Mode to Mesh Type for smart updates
+MODE_TO_TYPE_MAP = {
+    'POLY_DRAW': ['SINGLE_RAIL', 'MULTI_RAIL'],
+    'TUBE': ['TUBE'],
+    'POLYGON': ['POLYGON'],
+    'VBRIDGE': ['BRIDGE', 'BRIDGE_CHAIN'],
+    'QUADDRAW': ['QUADDRAW'],
+}
+
 def update_mesh_callback(self, context):
-    """Callback to rebuild mesh when settings change"""
+    """
+    Callback to rebuild mesh when settings change.
+    Only allows update if the active object's type matches the active mode.
+    """
     obj = context.active_object
-    if obj and obj.select_get() and obj.type == 'MESH':
-        # Sync settings to object custom properties
-        # This ensures rebuild_mesh uses the new values from UI
-        if "u_divisions" in obj: obj["u_divisions"] = self.u_divisions
-        if "v_divisions" in obj: obj["v_divisions"] = self.v_divisions
-        if "width" in obj: obj["width"] = self.width
-        if "radius" in obj: obj["radius"] = self.tube_radius
-        if "segments" in obj: obj["segments"] = self.tube_segments
-        if "snap_to_surface" in obj: obj["snap_to_surface"] = self.snap_to_surface
-        if "adaptive_radius" in obj: obj["adaptive_radius"] = self.adaptive_radius
+    if not (obj and obj.select_get() and obj.type == 'MESH' and "type" in obj):
+        return
+
+    # DECOUPLING LOGIC: Only update if active mode matches object's creation mode
+    obj_type = obj.get("type")
+    active_mode = self.active_mode
+    
+    should_update = False
+    if active_mode == 'NONE':
+        # DISCONNECT: When no mode is active, sliders do nothing to protected meshes
+        should_update = False
+    elif active_mode in MODE_TO_TYPE_MAP:
+        allowed_types = MODE_TO_TYPE_MAP[active_mode]
+        if isinstance(allowed_types, list):
+            if obj_type in allowed_types:
+                should_update = True
+        elif obj_type == allowed_types:
+            should_update = True
+            
+    if should_update:
+        # Force sync settings to object custom properties
+        obj["u_divisions"] = self.u_divisions
+        obj["v_divisions"] = self.v_divisions
+        obj["width"] = self.width
+        obj["radius"] = self.tube_radius
+        obj["segments"] = self.tube_segments
+        obj["snap_to_surface"] = self.snap_to_surface
+        obj["adaptive_radius"] = self.adaptive_radius
         
         patch_generator.rebuild_mesh(obj)
 
@@ -46,6 +76,19 @@ class RailFlowSettings(bpy.types.PropertyGroup):
         default=True,
         update=update_xray_callback
     )
+    show_hotkey_on_button: bpy.props.BoolProperty(
+        name="Show Hotkey on Button",
+        default=True
+    )
+    enable_hotkey: bpy.props.BoolProperty(
+        name="Enable Hotkey",
+        default=True
+    )
+
+    # Symmetry settings
+    symmetry_x: bpy.props.BoolProperty(name="X", default=False)
+    symmetry_y: bpy.props.BoolProperty(name="Y", default=False)
+    symmetry_z: bpy.props.BoolProperty(name="Z", default=False)
 
     # Active mode tracking
     active_mode: bpy.props.EnumProperty(
@@ -55,6 +98,11 @@ class RailFlowSettings(bpy.types.PropertyGroup):
             ('NONE', "None", "No mode active"),
             ('POLY_DRAW', "Poly Draw", "Poly Draw mode"),
             ('TUBE', "Tube", "Tube mode"),
+            ('ECOLLAPSE', "Ecollapse", "Edge Collapse mode"),
+            ('POLYGON', "Polygon", "Polygon mode"),
+            ('VBRIDGE', "Vertex Bridge", "Vertex Bridge mode"),
+            ('QUADDRAW', "Quaddraw", "Quaddraw mode"),
+            ('FILL_HOLE', "Fill Hole", "Fill Hole mode"),
         ],
         default='NONE'
     )
@@ -73,6 +121,13 @@ class RailFlowSettings(bpy.types.PropertyGroup):
         description="Smoothing iterations for stroke",
         default=0,
         min=0, max=10
+    )
+    angle_threshold: bpy.props.FloatProperty(
+        name="Angle Threshold",
+        description="Angle threshold for adaptive sampling",
+        default=15.0,
+        min=0.1, max=90.0,
+        precision=1
     )
 
     # Division settings
@@ -133,6 +188,34 @@ class RailFlowSettings(bpy.types.PropertyGroup):
         default=False,
         update=update_mesh_callback
     )
+    adaptive_blend: bpy.props.FloatProperty(
+        name="Adaptive Blend",
+        description="Blending factor for adaptive sampling",
+        default=0.0,
+        min=0.0, max=1.0,
+        precision=2
+    )
+
+    # Vertex Bridge settings
+    bridge_connection_mode: bpy.props.EnumProperty(
+        name="Connection Mode",
+        items=[
+            ('AUTO', 'Auto Connect (Geometric)', 'Geometric connection'),
+            ('EQUAL', 'Equal Strip (Topological)', 'Topological connection'),
+            ('OFF', 'Off', 'Manual connection')
+        ],
+        default='AUTO',
+        description="How to connect selected vertices to the stroke"
+    )
+    bridge_poly_along_stroke: bpy.props.BoolProperty(
+        name="Poly Along Stroke",
+        description="Generate poly strip along the drawn stroke",
+        default=False
+    )
+
+    # Hidden properties for Bridge logic
+    bridge_vertex_indices: bpy.props.StringProperty(default="")
+    bridge_object_name: bpy.props.StringProperty(default="")
 
 
 def register():

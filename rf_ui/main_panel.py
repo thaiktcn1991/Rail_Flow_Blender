@@ -4,9 +4,66 @@ Sidebar panel with drawing mode buttons and settings.
 Redesigned to match Maya Rail Flow structure.
 """
 
+################################################################################
+# 🛡️ AI PRE-DEBUG CHECKPOINT: BLENDER UI & LOGIC INTEGRITY
+# ------------------------------------------------------------------------------
+# TRƯỚC KHI SỬA BẤT KỲ LỖI NÀO, BẠN BẮT BUỘC PHẢI ĐỌC CÁC FILE CẨM NANG SAU:
+# 1. [SMART_DEV_HANDBOOK.md](file:///d:/Google_AntiGravity/scratch/Rail_Flow_Blender/docs/AI_ONBOARDING_STANDARDS/SMART_DEV_HANDBOOK.md)
+# 2. [COLLABORATION_PROTOCOL.md](file:///d:/Google_AntiGravity/scratch/Rail_Flow_Blender/docs/AI_ONBOARDING_STANDARDS/COLLABORATION_PROTOCOL.md)
+# 3. [DAILY_DEVELOPMENT_LOG.md](file:///d:/Google_AntiGravity/scratch/Rail_Flow_Blender/docs/notes/DAILY_DEVELOPMENT_LOG.md)
+# ------------------------------------------------------------------------------
+# 🇻🇳 NGÔN NGỮ: TIẾNG VIỆT LÀ BẮT BUỘC.
+# 🏗️ KIẾN TRÚC: TUÂN THỦ MODULAR (UI tách biệt hoàn toàn CORE).
+# ################################################################################
+
 import bpy
+from ..rf_core import patch_generator
+from ..rf_core import acceleration
 
+class RAILFLOW_OT_freeze_and_set(bpy.types.Operator):
+    """Freeze transforms and set as source"""
+    bl_idname = "railflow.freeze_and_set"
+    bl_label = "Freeze & Set"
+    bl_options = {'REGISTER', 'UNDO'}
 
+    def execute(self, context):
+        obj = context.active_object
+        if obj:
+            # Maya style: Freeze All (Translate, Rotate, Scale)
+            bpy.ops.object.transform_apply(location=True, rotation=True, scale=True)
+            context.scene.railflow_settings.source_mesh = obj
+            
+            # Pre-build cache (Maya style)
+            acceleration.pre_build(obj)
+            
+            self.report({'INFO'}, f"Source frozen and set: {obj.name}")
+        return {'FINISHED'}
+
+class RAILFLOW_OT_set_source_confirm(bpy.types.Operator):
+    """Confirm setting source with unapplied transforms"""
+    bl_idname = "railflow.set_source_confirm"
+    bl_label = "Transform Warning"
+    bl_options = {'REGISTER', 'INTERNAL'}
+    
+    message: bpy.props.StringProperty()
+    
+    def execute(self, context):
+        return {'FINISHED'}
+        
+    def invoke(self, context, event):
+        return context.window_manager.invoke_props_dialog(self, width=300)
+    
+    def draw(self, context):
+        layout = self.layout
+        layout.label(text="⚠️ Non-frozen transforms detected!", icon='ERROR')
+        col = layout.column()
+        col.label(text="This can lead to inaccurate snapping.")
+        col.label(text="Do you want to Freeze Transforms now?")
+        
+        row = layout.row()
+        row.operator("railflow.freeze_and_set", text="Freeze & Set", icon='CHECKMARK')
+        # row.operator("railflow.set_source", text="Skip & Set") # This would cause recursion if not careful, let user just click set again
+        
 class RAILFLOW_OT_set_source(bpy.types.Operator):
     """Set active object as source mesh"""
     bl_idname = "railflow.set_source"
@@ -18,8 +75,28 @@ class RAILFLOW_OT_set_source(bpy.types.Operator):
         return context.active_object and context.active_object.type == 'MESH'
 
     def execute(self, context):
-        context.scene.railflow_settings.source_mesh = context.active_object
-        self.report({'INFO'}, f"Source set: {context.active_object.name}")
+        obj = context.active_object
+        context.scene.railflow_settings.source_mesh = obj
+        
+        # 1. Polycount Guard (Maya style: >500k warning)
+        tri_count = sum(len(f.vertices) - 2 for f in obj.data.polygons) # Approx tris
+        if tri_count > 500000:
+            self.report({'WARNING'}, f"Source '{obj.name}' is too dense ({tri_count:,} tris)! Tool may be slow.")
+            
+        # 2. Check for unapplied transforms (Maya style: Rotation or Scale)
+        has_scale = any(abs(s - 1.0) > 0.001 for s in obj.scale)
+        has_rotation = any(abs(r) > 0.001 for r in obj.rotation_euler)
+        
+        # If skip_confirm is not set, show dialog
+        if (has_scale or has_rotation):
+            # We use invoke_props_dialog via a separate operator because execute can't be interactive easily here
+            bpy.ops.railflow.set_source_confirm('INVOKE_DEFAULT')
+            return {'FINISHED'}
+            
+        # Pre-build cache
+        acceleration.pre_build(obj)
+        
+        self.report({'INFO'}, f"Source set: {obj.name}")
         return {'FINISHED'}
 
 
@@ -56,7 +133,7 @@ class RAILFLOW_PT_main(bpy.types.Panel):
 
 
 # ============================================
-# SOURCE MESH (Collapsible)
+# SOURCE MESH
 # ============================================
 class RAILFLOW_PT_source(bpy.types.Panel):
     """Source mesh panel"""
@@ -66,43 +143,82 @@ class RAILFLOW_PT_source(bpy.types.Panel):
     bl_region_type = 'UI'
     bl_category = "Rail Flow"
     bl_parent_id = "RAILFLOW_PT_main"
-    bl_options = {'DEFAULT_CLOSED'}
-
-    def draw_header(self, context):
-        rf = context.scene.railflow_settings
-        if rf.source_mesh is not None:
-            self.layout.label(text="", icon='CHECKMARK')
-        else:
-            self.layout.label(text="", icon='ERROR')
 
     def draw(self, context):
         layout = self.layout
         rf = context.scene.railflow_settings
 
         if rf.source_mesh is not None:
-            row = layout.row()
-            row.label(text=rf.source_mesh.name)
-            face_count = len(rf.source_mesh.data.polygons)
-            row.label(text=f"({face_count:,} faces)")
+            layout.label(text=rf.source_mesh.name, icon='MESH_DATA')
         else:
-            layout.label(text="No source set")
+            layout.label(text="No source set", icon='ERROR')
 
         row = layout.row(align=True)
-        row.operator("railflow.set_source", text="Set", icon='ADD')
-        row.operator("railflow.clear_source", text="Clear", icon='X')
+        op = row.operator("railflow.set_source", text="Add", icon='ADD')
+        if op:
+            pass # No specific properties to set for this operator in the UI
+        op = row.operator("railflow.clear_source", text="Clear", icon='X')
+        if op:
+            pass # No specific properties to set for this operator in the UI
         
         layout.separator()
-        row = layout.row()
-        row.prop(rf, "use_xray", text="X-Ray", toggle=True, icon='XRAY')
-
+        col = layout.column(align=True)
+        row = col.row(align=True)
+        row.prop(rf, "u_divisions", text="U")
+        row.prop(rf, "v_divisions", text="V")
 
 # ============================================
-# DO ON MESH
+# SETTINGS & HOTKEYS
 # ============================================
-class RAILFLOW_PT_do_on_mesh(bpy.types.Panel):
+class RAILFLOW_PT_settings(bpy.types.Panel):
+    """General settings and hotkeys"""
+    bl_label = "Settings"
+    bl_idname = "RAILFLOW_PT_settings"
+    bl_space_type = 'VIEW_3D'
+    bl_region_type = 'UI'
+    bl_category = "Rail Flow"
+    bl_parent_id = "RAILFLOW_PT_main"
+
+    def draw(self, context):
+        layout = self.layout
+        rf = context.scene.railflow_settings
+        
+        row = layout.row(align=True)
+        row.prop(rf, "use_xray", text="", icon='XRAY', toggle=True)
+        row.prop(rf, "show_hotkey_on_button", text="", icon='TEXT')
+        row.prop(rf, "enable_hotkey", text="", icon='KEYINGSET_ADD')
+
+# ============================================
+# SYMMETRY
+# ============================================
+class RAILFLOW_PT_symmetry(bpy.types.Panel):
+    """Symmetry settings"""
+    bl_label = "Symmetry"
+    bl_idname = "RAILFLOW_PT_symmetry"
+    bl_space_type = 'VIEW_3D'
+    bl_region_type = 'UI'
+    bl_category = "Rail Flow"
+    bl_parent_id = "RAILFLOW_PT_main"
+
+    def draw(self, context):
+        layout = self.layout
+        rf = context.scene.railflow_settings
+        
+        row = layout.row(align=True)
+        row.operator("railflow.draw", text="Symmetry", icon='MOD_MIRROR') # Placeholder op
+        
+        sub = row.row(align=True)
+        sub.prop(rf, "symmetry_x", text="X", toggle=True)
+        sub.prop(rf, "symmetry_y", text="Y", toggle=True)
+        sub.prop(rf, "symmetry_z", text="Z", toggle=True)
+
+# ============================================
+# DRAWING MODE
+# ============================================
+class RAILFLOW_PT_drawing_modes(bpy.types.Panel):
     """Drawing modes panel"""
-    bl_label = "Do on Mesh"
-    bl_idname = "RAILFLOW_PT_do_on_mesh"
+    bl_label = "Drawing Mode"
+    bl_idname = "RAILFLOW_PT_drawing_modes"
     bl_space_type = 'VIEW_3D'
     bl_region_type = 'UI'
     bl_category = "Rail Flow"
@@ -113,43 +229,119 @@ class RAILFLOW_PT_do_on_mesh(bpy.types.Panel):
         rf = context.scene.railflow_settings
 
         col = layout.column(align=True)
+        col.scale_y = 1.2
 
-        # Poly Draw
-        row = col.row(align=True)
-        row.scale_y = 1.5
-        op = row.operator("railflow.draw", text="Poly Draw", icon='GREASEPENCIL',
-                         depress=rf.active_mode == 'POLY_DRAW')
-        op.u_divisions = rf.u_divisions
-        op.v_divisions = rf.v_divisions
-        op.width = rf.width
-        op.snap_to_surface = rf.snap_to_surface
-
-        # Tube
-        row = col.row(align=True)
-        row.scale_y = 1.5
-        op = row.operator("railflow.tube", text="Tube", icon='MESH_CYLINDER',
-                         depress=rf.active_mode == 'TUBE')
-        op.segments = rf.tube_segments
-        op.v_divisions = rf.v_divisions
-        op.radius = rf.tube_radius
-        op.adaptive_radius = rf.adaptive_radius
-
-        # Future modes
-        col.separator()
-        sub = col.column(align=True)
-        sub.enabled = False
-        sub.scale_y = 1.2
-        sub.operator("railflow.draw", text="Bridge", icon='MOD_SKIN')
-        sub.operator("railflow.draw", text="Fill Hole", icon='MESH_CIRCLE')
-        sub.operator("railflow.draw", text="Edge Loop", icon='MESH_TORUS')
-
+        # --- Poly Draw ---
+        op = col.operator("railflow.draw", text="Poly Draw", icon='GREASEPENCIL',
+                    depress=rf.active_mode == 'POLY_DRAW')
+        if op:
+            op.mode = 'POLY_DRAW'
+        if rf.active_mode == 'POLY_DRAW':
+            box = col.box()
+            box.scale_y = 0.8
+            box.label(text="Poly Draw Settings", icon='SETTINGS')
+            b_col = box.column(align=True)
+            b_col.prop(rf, "width", text="Width")
+            b_col.prop(rf, "snap_to_surface", text="Snap to Surface")
+        
+        # --- Tube ---
+        col.operator("railflow.tube", text="Tube", icon='MESH_CYLINDER',
+                    depress=rf.active_mode == 'TUBE')
+        if rf.active_mode == 'TUBE':
+            box = col.box()
+            box.scale_y = 0.8
+            box.label(text="Tube Settings", icon='SETTINGS')
+            b_col = box.column(align=True)
+            b_col.prop(rf, "tube_segments", text="Segments")
+            b_col.prop(rf, "tube_radius", text="Radius")
+            b_col.prop(rf, "adaptive_radius", text="Adaptive Radius")
+        
+        # --- Ecollapse ---
+        op = col.operator("railflow.draw", text="Ecollapse", icon='X',
+                    depress=rf.active_mode == 'ECOLLAPSE')
+        if op:
+            op.mode = 'ECOLLAPSE'
+        if rf.active_mode == 'ECOLLAPSE':
+            box = col.box()
+            box.label(text="Ecollapse Settings (Draft)")
+        
+        # --- Polygon ---
+        op = col.operator("railflow.draw", text="Polygon", icon='MESH_PLANE',
+                    depress=rf.active_mode == 'POLYGON')
+        if op:
+            op.mode = 'POLYGON'
+        if rf.active_mode == 'POLYGON':
+            box = col.box()
+            box.label(text="Polygon Settings (Draft)")
 
 # ============================================
-# STROKE SETTINGS
+# MESH OPERATIONS
+# ============================================
+class RAILFLOW_PT_mesh_operations(bpy.types.Panel):
+    """Mesh operations panel"""
+    bl_label = "Mesh Operations"
+    bl_idname = "RAILFLOW_PT_mesh_operations"
+    bl_space_type = 'VIEW_3D'
+    bl_region_type = 'UI'
+    bl_category = "Rail Flow"
+    bl_parent_id = "RAILFLOW_PT_main"
+
+    def draw(self, context):
+        layout = self.layout
+        rf = context.scene.railflow_settings
+        
+        col = layout.column(align=True)
+        col.scale_y = 1.1
+        
+        op = col.operator("railflow.bridge_activate", text="Vertex Bridge", icon='MOD_SKIN',
+                    depress=rf.active_mode == 'VBRIDGE')
+        if op:
+            pass # Active mode is set by operator invoke
+        if rf.active_mode == 'VBRIDGE':
+            box = col.box()
+            box.label(text="Vertex Bridge Setting", icon='LINKED')
+            
+            b_col = box.column(align=True)
+            b_col.label(text="1. Select vertices -> Confirm")
+            
+            # Confirm Button
+            # Note: This will be handled by the modal operator if active, 
+            # or it can be a separate operator that starts the modal with selection.
+            b_row = b_col.row(align=True)
+            b_row.scale_y = 1.2
+            b_row.operator("railflow.bridge_confirm", text="Confirm Selection", icon='CHECKMARK')
+            
+            b_col.separator()
+            b_col.label(text="Connection Mode:")
+            b_col.prop(rf, "bridge_connection_mode", text="")
+            
+            b_col.separator()
+            b_col.prop(rf, "bridge_poly_along_stroke", text="Poly Along Stroke")
+
+        # --- Quaddraw ---
+        op = col.operator("railflow.draw", text="Quaddraw", icon='FACESEL_HLMT',
+                    depress=rf.active_mode == 'QUADDRAW')
+        if op:
+            op.mode = 'QUADDRAW'
+        if rf.active_mode == 'QUADDRAW':
+            box = col.box()
+            box.label(text="Quaddraw Settings (Draft)")
+
+        # --- Fill Hole ---
+        op = col.operator("railflow.draw", text="Fill Hole", icon='MESH_CIRCLE',
+                    depress=rf.active_mode == 'FILL_HOLE')
+        if op:
+            op.mode = 'FILL_HOLE'
+        if rf.active_mode == 'FILL_HOLE':
+            box = col.box()
+            box.label(text="Fill Hole Settings (Draft)")
+
+# ============================================
+# STROKE SETTING
 # ============================================
 class RAILFLOW_PT_stroke_settings(bpy.types.Panel):
     """Stroke settings panel"""
-    bl_label = "Stroke Settings"
+    bl_label = "Stroke Setting"
     bl_idname = "RAILFLOW_PT_stroke_settings"
     bl_space_type = 'VIEW_3D'
     bl_region_type = 'UI'
@@ -161,9 +353,26 @@ class RAILFLOW_PT_stroke_settings(bpy.types.Panel):
         rf = context.scene.railflow_settings
 
         col = layout.column(align=True)
-        col.prop(rf, "stroke_spacing", text="Spacing")
-        col.prop(rf, "stroke_smooth", text="Smooth")
-        col.prop(rf, "snap_to_surface", text="Snap to Surface")
+        col.prop(rf, "stroke_smooth", text="Smoothness")
+        col.prop(rf, "angle_threshold", text="Angle Threshold")
+
+# ============================================
+# MESH OPTION
+# ============================================
+class RAILFLOW_PT_mesh_options(bpy.types.Panel):
+    """Mesh options panel"""
+    bl_label = "Mesh Option"
+    bl_idname = "RAILFLOW_PT_mesh_options"
+    bl_space_type = 'VIEW_3D'
+    bl_region_type = 'UI'
+    bl_category = "Rail Flow"
+    bl_parent_id = "RAILFLOW_PT_main"
+
+    def draw(self, context):
+        layout = self.layout
+        rf = context.scene.railflow_settings
+        
+        layout.prop(rf, "adaptive_blend", text="Adaptive Blend", slider=True)
 
 
 # ============================================
@@ -190,64 +399,8 @@ class RAILFLOW_PT_mesh_settings(bpy.types.Panel):
         col.prop(rf, "width", text="Width", slider=True)
 
 
-# ============================================
-# POLY DRAW MODE SETTINGS (shows when active)
-# ============================================
-class RAILFLOW_PT_poly_draw_settings(bpy.types.Panel):
-    """Poly Draw mode specific settings"""
-    bl_label = "Poly Draw Settings"
-    bl_idname = "RAILFLOW_PT_poly_draw_settings"
-    bl_space_type = 'VIEW_3D'
-    bl_region_type = 'UI'
-    bl_category = "Rail Flow"
-    bl_parent_id = "RAILFLOW_PT_main"
-    bl_options = {'DEFAULT_CLOSED'}
-
-    @classmethod
-    def poll(cls, context):
-        rf = context.scene.railflow_settings
-        return rf.active_mode == 'POLY_DRAW'
-
-    def draw(self, context):
-        layout = self.layout
-        rf = context.scene.railflow_settings
-
-        col = layout.column(align=True)
-        row = col.row(align=True)
-        row.prop(rf, "u_divisions", text="U Divisions")
-        row = col.row(align=True)
-        row.prop(rf, "v_divisions", text="V Divisions")
-        col.prop(rf, "width", text="Width", slider=True)
-        col.prop(rf, "snap_to_surface", text="Snap to Surface")
-
-
-# ============================================
-# TUBE MODE SETTINGS (shows when active)
-# ============================================
-class RAILFLOW_PT_tube_settings(bpy.types.Panel):
-    """Tube mode specific settings"""
-    bl_label = "Tube Settings"
-    bl_idname = "RAILFLOW_PT_tube_settings"
-    bl_space_type = 'VIEW_3D'
-    bl_region_type = 'UI'
-    bl_category = "Rail Flow"
-    bl_parent_id = "RAILFLOW_PT_main"
-    bl_options = {'DEFAULT_CLOSED'}
-
-    @classmethod
-    def poll(cls, context):
-        rf = context.scene.railflow_settings
-        return rf.active_mode == 'TUBE'
-
-    def draw(self, context):
-        layout = self.layout
-        rf = context.scene.railflow_settings
-
-        col = layout.column(align=True)
-        col.prop(rf, "tube_segments", text="Segments")
-        col.prop(rf, "v_divisions", text="V Divisions")
-        col.prop(rf, "tube_radius", text="Radius", slider=True)
-        col.prop(rf, "adaptive_radius", text="Adaptive Radius")
+# RAILFLOW_PT_poly_draw_settings and RAILFLOW_PT_tube_settings removed
+# Logic integrated into Drawing Mode and Mesh Operations panels contextual drawing.
 
 
 class RAILFLOW_OT_reload(bpy.types.Operator):
@@ -331,15 +484,18 @@ class RAILFLOW_PT_help(bpy.types.Panel):
 
 classes = [
     RAILFLOW_OT_set_source,
+    RAILFLOW_OT_freeze_and_set,
+    RAILFLOW_OT_set_source_confirm,
     RAILFLOW_OT_clear_source,
     RAILFLOW_OT_reload,
     RAILFLOW_PT_main,
     RAILFLOW_PT_source,
-    RAILFLOW_PT_do_on_mesh,
+    RAILFLOW_PT_settings,
+    RAILFLOW_PT_symmetry,
+    RAILFLOW_PT_drawing_modes,
+    RAILFLOW_PT_mesh_operations,
     RAILFLOW_PT_stroke_settings,
-    RAILFLOW_PT_mesh_settings,
-    RAILFLOW_PT_poly_draw_settings,
-    RAILFLOW_PT_tube_settings,
+    RAILFLOW_PT_mesh_options,
     RAILFLOW_PT_help,
 ]
 

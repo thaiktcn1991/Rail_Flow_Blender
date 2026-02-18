@@ -1,9 +1,19 @@
 """
 Patch Generator for Rail Flow Blender
-Creates quad meshes from rail strokes using RMF algorithm.
-
-Core mesh generation logic ported from Maya version.
+Handles mesh creation, snapping, and style application.
 """
+
+################################################################################
+# 🛡️ AI PRE-DEBUG CHECKPOINT: BLENDER UI & LOGIC INTEGRITY
+# ------------------------------------------------------------------------------
+# TRƯỚC KHI SỬA BẤT KỲ LỖI NÀO, BẠN BẮT BUỘC PHẢI ĐỌC CÁC FILE CẨM NANG SAU:
+# 1. [SMART_DEV_HANDBOOK.md](file:///d:/Google_AntiGravity/scratch/Rail_Flow_Blender/docs/AI_ONBOARDING_STANDARDS/SMART_DEV_HANDBOOK.md)
+# 2. [COLLABORATION_PROTOCOL.md](file:///d:/Google_AntiGravity/scratch/Rail_Flow_Blender/docs/AI_ONBOARDING_STANDARDS/COLLABORATION_PROTOCOL.md)
+# 3. [DAILY_DEVELOPMENT_LOG.md](file:///d:/Google_AntiGravity/scratch/Rail_Flow_Blender/docs/notes/DAILY_DEVELOPMENT_LOG.md)
+# ------------------------------------------------------------------------------
+# 🇻🇳 NGÔN NGỮ: TIẾNG VIỆT LÀ BẮT BUỘC.
+# 🏗️ KIẾN TRÚC: TUÂN THỦ MODULAR (CORE tách biệt hoàn toàn UI).
+# ################################################################################
 
 import bpy
 import bmesh
@@ -11,6 +21,39 @@ from mathutils import Vector
 
 from . import geometry_utils as geo
 from . import acceleration
+
+
+def enforce_outward_normals(obj, source_obj):
+    """
+    Ensure mesh normals are facing away from the source mesh.
+    """
+    if not (obj and source_obj and obj.data.polygons):
+        return
+
+    # 1. Get average normal of the new mesh
+    avg_norm = Vector((0, 0, 0))
+    for f in obj.data.polygons:
+        avg_norm += f.normal
+    avg_norm.normalize()
+
+    # 2. Get surface normal at the center of the mesh
+    # Use bboxes center as a proxy for 'mesh center'
+    bbox_center = sum((Vector(b) for b in obj.bound_box), Vector()) / 8.0
+    cp = acceleration.closest_point_on_mesh(source_obj, obj.matrix_world @ bbox_center)
+    
+    if cp:
+        loc, surf_norm, idx, dist = cp
+        # If mesh normal and surface normal are opposite (dot < 0), flip!
+        # Note: We want them to point in the SAME direction (both away from mesh)
+        if avg_norm.dot(surf_norm) < 0:
+            bm = bmesh.new()
+            bm.from_mesh(obj.data)
+            bmesh.ops.reverse_faces(bm, faces=bm.faces)
+            bm.to_mesh(obj.data)
+            bm.free()
+            obj.data.update()
+            return True
+    return False
 
 
 def generate_quad_patch(stroke_points, u_divisions=4, v_divisions=8,
@@ -57,11 +100,14 @@ def generate_quad_patch(stroke_points, u_divisions=4, v_divisions=8,
 
             # Snap to surface if enabled
             if snap_to_surface and source_obj is not None:
-                result = acceleration.closest_point_on_mesh(source_obj, vert_pos)
+                # Use RMF normal for projection direction to ensure smooth grid flow
+                # This prevents vertices from "sliding" towards geometric edges
+                result = acceleration.smart_raycast_snap(source_obj, vert_pos, normal)
                 if result is not None:
-                    location, normal, index, distance = result
+                    location, hit_norm, index, distance = result
                     if distance < width * 2:  # Only snap if close enough
-                        vert_pos = location
+                        # Apply surface offset to prevent Z-fighting
+                        vert_pos = location + hit_norm * 0.001
 
             vertices.append(vert_pos)
 
@@ -85,6 +131,10 @@ def generate_quad_patch(stroke_points, u_divisions=4, v_divisions=8,
     obj = bpy.data.objects.new("RailPatch", mesh)
     bpy.context.collection.objects.link(obj)
     
+    # NITRO SMART NORMAL FIX: Ensure it faces AWAY from source
+    if snap_to_surface and source_obj:
+        enforce_outward_normals(obj, source_obj)
+    
     # Apply Rail Flow Style
     if hasattr(bpy.context.scene, "railflow_settings"):
         apply_style(obj, bpy.context.scene.railflow_settings.use_xray)
@@ -106,19 +156,9 @@ def generate_quad_patch(stroke_points, u_divisions=4, v_divisions=8,
 
 
 def generate_multi_rail_patch(strokes, u_divisions=1, v_divisions=8,
-                               source_obj=None, snap_to_surface=True):
+                               source_obj=None, snap_to_surface=True, segmented=False):
     """
     Generate a quad mesh patch between multiple strokes (multi-rail).
-
-    Args:
-        strokes: List of strokes (each stroke is list of points)
-        u_divisions: Number of divisions across width (between first and last stroke if 2 strokes)
-        v_divisions: Number of divisions along length
-        source_obj: Source mesh for surface snapping
-        snap_to_surface: Whether to snap vertices to source surface
-
-    Returns:
-        Created Blender mesh object
     """
     if len(strokes) < 2:
         return None
@@ -133,35 +173,48 @@ def generate_multi_rail_patch(strokes, u_divisions=1, v_divisions=8,
     if len(resampled_strokes) < 2:
         return None
 
-    # Logic for U Divisions:
-    # If 2 strokes: Interpolate 'u_divisions' times between them.
-    # If >2 strokes: Use strokes as fixed profiles (ignore u_divisions for now or treat as 1 per gap).
-    # For now, let's optimize for the 2-stroke case which is most common.
-    
     final_cols = []
-    
-    if len(resampled_strokes) == 2:
-        # Interpolate between Stroke A and Stroke B
-        stroke_a = resampled_strokes[0]
-        stroke_b = resampled_strokes[1]
-        
-        # u_divisions is valid segments. number of point columns = u_divisions + 1
+    num_strokes = len(resampled_strokes)
+
+    if segmented:
+        # NITRO SEGMENTED (Bridge/Chain): Every stroke is an edge loop
+        # We interpolate 'u_divisions' columns BETWEEN each pair of strokes
+        for s_idx in range(num_strokes - 1):
+            stroke_a = resampled_strokes[s_idx]
+            stroke_b = resampled_strokes[s_idx + 1]
+            
+            # Start of segment (Stroke A)
+            if s_idx == 0:
+                final_cols.append(stroke_a)
+            
+            # Intermediate columns
+            for i in range(1, u_divisions + 1):
+                t = i / u_divisions
+                col = []
+                for j in range(v_divisions + 1):
+                    p_a = Vector(stroke_a[j])
+                    p_b = Vector(stroke_b[j])
+                    col.append(p_a.lerp(p_b, t))
+                final_cols.append(col)
+    else:
+        # GLOBAL LOFT (Poly Draw): Smooth interpolation across the entire width
         num_cols = max(2, u_divisions + 1)
-        
         for i in range(num_cols):
-            t = i / (num_cols - 1)
+            t_global = i / (num_cols - 1)
+            t_scaled = t_global * (num_strokes - 1)
+            idx_a = int(t_scaled)
+            idx_b = min(idx_a + 1, num_strokes - 1)
+            u = t_scaled - idx_a
+            
+            stroke_a = resampled_strokes[idx_a]
+            stroke_b = resampled_strokes[idx_b]
+            
             col_points = []
             for j in range(v_divisions + 1):
                 p_a = Vector(stroke_a[j])
                 p_b = Vector(stroke_b[j])
-                p_interp = p_a.lerp(p_b, t)
-                col_points.append(p_interp)
+                col_points.append(p_a.lerp(p_b, u))
             final_cols.append(col_points)
-            
-    else:
-        # Use existing strokes as columns (Legacy/Multi-Profile behavior)
-        # TODO: Implement complex interpolation for >2 strokes if requested
-        final_cols = resampled_strokes
 
     # Generate vertex grid
     vertices = []
@@ -174,23 +227,25 @@ def generate_multi_rail_patch(strokes, u_divisions=1, v_divisions=8,
 
             # Snap to surface if enabled
             if snap_to_surface and source_obj is not None:
-                # Need to use localized search or BVH for speed
-                # For now just use simple closest point
-                # Convert to local space of source for search? No, simple world space
-                
-                # IMPORTANT: closest_point_on_mesh works in Object Local space usually or heavily implies it
-                # RailFlow's acceleration wrapper might handle world space. Let's assume World Space input if implemented correctly.
-                # However, Blender's obj.closest_point_on_mesh requires Local Space point.
-                
-                # Let's trust acceleration.closest_point_on_mesh handles transforms or do it manually
-                mx_inv = source_obj.matrix_world.inverted()
-                local_pos = mx_inv @ vert_pos
-                
-                status, loc, norm, idx = source_obj.closest_point_on_mesh(local_pos)
-                if status:
-                    world_loc = source_obj.matrix_world @ loc
-                    if (world_loc - vert_pos).length < 1.0: # Threshold
-                        vert_pos = world_loc
+                # For Multi-Rail, we derive a "Projection Normal" by cross-product
+                # of the rail segment and the width segment (interpolation direction)
+                proj_dir = Vector((0, 0, 1)) # Fallback
+                try:
+                    # p_a and p_b are still in scope if we organize the loop well, 
+                    # but since they aren't, let's just use Z-up or Closest Point Normal as fallback
+                    # In a high-quality port, we'd calculate the surface normal here.
+                    
+                    # For now, let's use the closest surface normal as the projection direction
+                    # to refine the position without sideways sliding.
+                    cp = acceleration.closest_point_on_mesh(source_obj, vert_pos)
+                    if cp:
+                        # Use the surface normal at the closest point for the projection ray
+                        location, hit_norm, idx, dist = cp
+                        result = acceleration.smart_raycast_snap(source_obj, vert_pos, hit_norm)
+                        if result:
+                            vert_pos = result[0] + result[1] * 0.001
+                except:
+                    pass
 
             vertices.append(vert_pos)
 
@@ -217,6 +272,10 @@ def generate_multi_rail_patch(strokes, u_divisions=1, v_divisions=8,
     # Create object
     obj = bpy.data.objects.new("MultiRailPatch", mesh)
     bpy.context.collection.objects.link(obj)
+    
+    # NITRO SMART NORMAL FIX
+    if snap_to_surface and source_obj:
+        enforce_outward_normals(obj, source_obj)
     
     # Apply Rail Flow Style
     rf_settings = getattr(bpy.context.scene, "railflow_settings", None)
@@ -484,7 +543,7 @@ def apply_style(obj, use_xray=True):
         mod.material_offset = 1  # Use 2nd material (Wire)
         # mod.thickness = 0.008    # x2 Thickness (8mm)
         mod.thickness = 0.008
-        mod.use_even_offset = False 
+        mod.use_even_offset = True 
         mod.use_boundary = True
         mod.use_relative_offset = False # Absolute thickness
             
@@ -530,6 +589,13 @@ def rebuild_mesh(obj):
     try:
         mesh_type = obj["type"]
         new_data = None
+
+        # V1.1: Capture average normal of old mesh for orientation persistence
+        old_avg_norm = Vector((0, 0, 0))
+        if obj.data.polygons:
+            for f in obj.data.polygons:
+                old_avg_norm += f.normal
+            old_avg_norm.normalize()
 
         # Retrieve source object if needed
         source_obj = None
@@ -584,6 +650,20 @@ def rebuild_mesh(obj):
 
         # Swap mesh data
         if new_data:
+            # Check orientation persistence
+            new_avg_norm = Vector((0, 0, 0))
+            if new_data.polygons:
+                for f in new_data.polygons:
+                    new_avg_norm += f.normal
+                new_avg_norm.normalize()
+            
+            # If normals are facing opposite directions (dot product < 0), flip!
+            if old_avg_norm.dot(new_avg_norm) < -0.1:
+                for f in new_data.polygons:
+                    f.flip()
+                new_data.update()
+                print("Rail Flow: Normal flipped to match orientation persistence")
+
             old_data = obj.data
             obj.data = new_data
             if old_data.users == 0:
@@ -602,3 +682,91 @@ def rebuild_mesh(obj):
         traceback.print_exc()
 
     return False
+
+
+def generate_bridge_patch(source_obj_name, vertex_indices, stroke_points, u_divisions=4, v_divisions=8,
+                           connection_mode='AUTO', poly_along_stroke=False, source_surface_obj=None, snap_to_surface=True):
+    """
+    Generate a bridge mesh between selected vertices and a drawn rail.
+    """
+    source_obj = bpy.data.objects.get(source_obj_name)
+    if not source_obj or not vertex_indices or len(stroke_points) < 2:
+        return None
+
+    # 1. Get world positions of selected vertices
+    source_verts = []
+    matrix_world = source_obj.matrix_world
+    for idx in vertex_indices:
+        if idx < len(source_obj.data.vertices):
+            pos = matrix_world @ source_obj.data.vertices[idx].co
+            source_verts.append(pos)
+    
+    if len(source_verts) < 2:
+        return None
+
+    # 2. Resample stroke points - ALWAYS match selected vertex count for topological parity
+    num_v_target = len(source_verts)
+    resampled_stroke = geo.resample_curve(stroke_points, num_v_target)
+    
+    # 3. Handle Mapping
+    final_rows = []
+    
+    # In Bridge mode, we always want a 1:1 mapping from selected vertices to the rail points
+    for i in range(num_v_target):
+        p_start = source_verts[i]
+        p_end = Vector(resampled_stroke[i])
+        
+        row = []
+        for j in range(u_divisions + 1):
+            t = j / u_divisions
+            row.append(p_start.lerp(p_end, t))
+        final_rows.append(row)
+    
+    actual_v_div = num_v_target - 1
+
+    # 4. Create Mesh
+    vertices = []
+    for row in final_rows:
+        for v in row:
+            if snap_to_surface and source_surface_obj:
+                # Use acceleration to snap to surface
+                result = acceleration.smart_raycast_snap(source_surface_obj, v, Vector((0, 0, 1)))
+                if result:
+                    v = result[0] + result[1] * 0.001
+            vertices.append(v)
+            
+    faces = []
+    u_count = u_divisions + 1
+    for i in range(actual_v_div):
+        for j in range(u_divisions):
+            v0 = i * u_count + j
+            v1 = v0 + 1
+            v2 = v1 + u_count
+            v3 = v0 + u_count
+            faces.append((v0, v1, v2, v3))
+
+    mesh = bpy.data.meshes.new("BridgePatch")
+    mesh.from_pydata(vertices, [], faces)
+    mesh.update()
+    
+    obj = bpy.data.objects.new("BridgePatch", mesh)
+    bpy.context.collection.objects.link(obj)
+    
+    # NITRO SMART NORMAL FIX
+    if snap_to_surface and source_surface_obj:
+        enforce_outward_normals(obj, source_surface_obj)
+    
+    apply_style(obj, True)
+    
+    store_metadata(obj, {
+        "type": "BRIDGE",
+        "source_mesh_name": source_obj_name,
+        "vertex_indices": vertex_indices,
+        "stroke_points": stroke_points,
+        "u_divisions": u_divisions,
+        "v_divisions": v_divisions,
+        "connection_mode": connection_mode,
+        "snap_to_surface": snap_to_surface
+    })
+    
+    return obj
