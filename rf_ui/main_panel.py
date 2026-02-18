@@ -52,7 +52,7 @@ class RAILFLOW_PT_main(bpy.types.Panel):
 
     def draw(self, context):
         layout = self.layout
-        layout.label(text="v1.0", icon='MESH_GRID')
+        layout.label(text="v1.1", icon='MESH_GRID')
 
 
 # ============================================
@@ -90,6 +90,10 @@ class RAILFLOW_PT_source(bpy.types.Panel):
         row = layout.row(align=True)
         row.operator("railflow.set_source", text="Set", icon='ADD')
         row.operator("railflow.clear_source", text="Clear", icon='X')
+        
+        layout.separator()
+        row = layout.row()
+        row.prop(rf, "use_xray", text="X-Ray", toggle=True, icon='XRAY')
 
 
 # ============================================
@@ -322,100 +326,10 @@ class RAILFLOW_PT_help(bpy.types.Panel):
         row.operator("railflow.reload", text="Reload Add-on", icon='FILE_REFRESH')
 
 
-class RailFlowSettings(bpy.types.PropertyGroup):
-    """Rail Flow settings stored in scene"""
 
-    # Source mesh reference
-    source_mesh: bpy.props.PointerProperty(
-        name="Source Mesh",
-        description="Source mesh for retopology",
-        type=bpy.types.Object,
-        poll=lambda self, obj: obj.type == 'MESH'
-    )
-
-    # Active mode tracking
-    active_mode: bpy.props.EnumProperty(
-        name="Active Mode",
-        description="Currently active drawing mode",
-        items=[
-            ('NONE', "None", "No mode active"),
-            ('POLY_DRAW', "Poly Draw", "Poly Draw mode"),
-            ('TUBE', "Tube", "Tube mode"),
-        ],
-        default='NONE'
-    )
-
-    # Stroke settings
-    stroke_spacing: bpy.props.FloatProperty(
-        name="Stroke Spacing",
-        description="Minimum distance between stroke points",
-        default=0.01,
-        min=0.001, max=1.0,
-        step=1,
-        precision=3
-    )
-    stroke_smooth: bpy.props.IntProperty(
-        name="Stroke Smooth",
-        description="Smoothing iterations for stroke",
-        default=0,
-        min=0, max=10
-    )
-
-    # Division settings
-    u_divisions: bpy.props.IntProperty(
-        name="U Divisions",
-        description="Divisions across width",
-        default=4,
-        min=1, max=32
-    )
-    v_divisions: bpy.props.IntProperty(
-        name="V Divisions",
-        description="Divisions along length",
-        default=8,
-        min=2, max=64
-    )
-
-    # Size settings
-    width: bpy.props.FloatProperty(
-        name="Width",
-        description="Patch width",
-        default=0.5,
-        min=0.01, max=10.0,
-        step=10,
-        precision=2
-    )
-
-    # Tube settings
-    tube_radius: bpy.props.FloatProperty(
-        name="Tube Radius",
-        description="Radius of tube mesh",
-        default=0.1,
-        min=0.001, max=10.0,
-        step=1,
-        precision=3
-    )
-    tube_segments: bpy.props.IntProperty(
-        name="Tube Segments",
-        description="Segments around tube circumference",
-        default=8,
-        min=3, max=32
-    )
-
-    # Snapping settings
-    snap_to_surface: bpy.props.BoolProperty(
-        name="Snap to Surface",
-        description="Snap vertices to source mesh surface",
-        default=True
-    )
-    adaptive_radius: bpy.props.BoolProperty(
-        name="Adaptive Radius",
-        description="Calculate tube radius based on surface thickness",
-        default=False
-    )
 
 
 classes = [
-    RailFlowSettings,
     RAILFLOW_OT_set_source,
     RAILFLOW_OT_clear_source,
     RAILFLOW_OT_reload,
@@ -434,13 +348,7 @@ def register():
     for cls in classes:
         bpy.utils.register_class(cls)
 
-    # Register settings property group
-    bpy.types.Scene.railflow_settings = bpy.props.PointerProperty(type=RailFlowSettings)
-
 
 def unregister():
-    # Unregister settings
-    del bpy.types.Scene.railflow_settings
-
     for cls in reversed(classes):
         bpy.utils.unregister_class(cls)

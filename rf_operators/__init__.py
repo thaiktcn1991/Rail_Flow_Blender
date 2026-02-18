@@ -1,14 +1,17 @@
 # Rail Flow Operators
 # Modal operators for interactive drawing
 
-from . import rail_draw
+from . import op_rail
+from . import op_tube
 
 classes = []
 
 
 def register():
-    rail_draw.register()
+    op_rail.register()
+    op_tube.register()
 
 
 def unregister():
-    rail_draw.unregister()
+    op_tube.unregister()
+    op_rail.unregister()

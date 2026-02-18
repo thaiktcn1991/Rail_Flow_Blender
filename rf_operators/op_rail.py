@@ -1,10 +1,6 @@
 """
-Rail Draw Operator for Rail Flow Blender
-Modal operator for interactive stroke drawing and mesh generation.
-
-This is the core drawing tool - equivalent to Maya's draggerContext.
+Rail Draw Operator (Poly Draw)
 """
-
 import bpy
 import gpu
 from gpu_extras.batch import batch_for_shader
@@ -46,8 +42,8 @@ class RAILFLOW_OT_draw(bpy.types.Operator):
     )
 
     # Internal state
-    _strokes = []  # List of strokes (each stroke is list of points)
-    _current_stroke = []  # Current stroke being drawn
+    _strokes = []  # List of strokes
+    _current_stroke = []  # Current stroke
     _is_drawing = False
     _source_obj = None
     _draw_handler = None
@@ -75,7 +71,7 @@ class RAILFLOW_OT_draw(bpy.types.Operator):
         self._current_stroke = []
         self._is_drawing = False
 
-        # Add draw handler for stroke preview
+        # Add draw handler
         self._draw_handler = bpy.types.SpaceView3D.draw_handler_add(
             self.draw_callback, (), 'WINDOW', 'POST_VIEW'
         )
@@ -89,7 +85,7 @@ class RAILFLOW_OT_draw(bpy.types.Operator):
     def modal(self, context, event):
         context.area.tag_redraw()
 
-        # Mouse move - add points to current stroke
+        # Mouse move
         if event.type == 'MOUSEMOVE':
             if self._is_drawing:
                 point = self.get_surface_point(context, event)
@@ -101,34 +97,56 @@ class RAILFLOW_OT_draw(bpy.types.Operator):
                         if (Vector(point) - last_point).length > 0.01:
                             self._current_stroke.append(point)
 
-        # Left mouse - start/finish stroke
+        # Left mouse
         elif event.type == 'LEFTMOUSE':
             if event.value == 'PRESS':
                 self._is_drawing = True
-                self._current_stroke = []  # Start new stroke
+                self._current_stroke = []
                 point = self.get_surface_point(context, event)
                 if point is not None:
                     self._current_stroke.append(point)
             elif event.value == 'RELEASE':
                 self._is_drawing = False
-                # Save stroke if valid
                 if len(self._current_stroke) >= 2:
                     self._strokes.append(self._current_stroke.copy())
                 self._current_stroke = []
 
-        # Enter - generate mesh from strokes
+        # Enter
         elif event.type in {'RET', 'NUMPAD_ENTER'}:
             if len(self._strokes) >= 1:
                 self.generate_mesh(context)
             self.cleanup(context)
             return {'FINISHED'}
 
-        # Escape - cancel
+        # Escape
         elif event.type == 'ESC':
             self.cleanup(context)
             return {'CANCELLED'}
 
-        # Right click - clear all strokes
+        # Scroll - Adjust Divisions
+        elif event.type == 'WHEELUPMOUSE':
+            if event.ctrl:
+                self.v_divisions += 1
+                context.scene.railflow_settings.v_divisions = self.v_divisions
+                context.area.header_text_set(f"V Divisions: {self.v_divisions}")
+            else:
+                self.u_divisions += 1
+                context.scene.railflow_settings.u_divisions = self.u_divisions
+                context.area.header_text_set(f"U Divisions: {self.u_divisions}")
+            return {'RUNNING_MODAL'}
+
+        elif event.type == 'WHEELDOWNMOUSE':
+            if event.ctrl:
+                self.v_divisions = max(2, self.v_divisions - 1)
+                context.scene.railflow_settings.v_divisions = self.v_divisions
+                context.area.header_text_set(f"V Divisions: {self.v_divisions}")
+            else:
+                self.u_divisions = max(1, self.u_divisions - 1)
+                context.scene.railflow_settings.u_divisions = self.u_divisions
+                context.area.header_text_set(f"U Divisions: {self.u_divisions}")
+            return {'RUNNING_MODAL'}
+
+        # Right click
         elif event.type == 'RIGHTMOUSE' and event.value == 'PRESS':
             self._strokes = []
             self._current_stroke = []
@@ -136,11 +154,9 @@ class RAILFLOW_OT_draw(bpy.types.Operator):
         return {'RUNNING_MODAL'}
 
     def get_surface_point(self, context, event):
-        """Raycast from mouse position to source mesh surface"""
         if self._source_obj is None:
             return None
 
-        # Get ray from mouse position
         region = context.region
         rv3d = context.region_data
         coord = (event.mouse_region_x, event.mouse_region_y)
@@ -148,7 +164,6 @@ class RAILFLOW_OT_draw(bpy.types.Operator):
         ray_origin = view3d_utils.region_2d_to_origin_3d(region, rv3d, coord)
         ray_direction = view3d_utils.region_2d_to_vector_3d(region, rv3d, coord)
 
-        # Raycast to source mesh
         result = acceleration.raycast_mesh(
             self._source_obj,
             ray_origin,
@@ -157,19 +172,16 @@ class RAILFLOW_OT_draw(bpy.types.Operator):
 
         if result is not None:
             location, normal, index, distance = result
-            # Transform to world space
             world_location = self._source_obj.matrix_world @ location
             return world_location
 
         return None
 
     def generate_mesh(self, context):
-        """Generate mesh from strokes - single or multi rail"""
         if len(self._strokes) == 0:
             return
 
         if len(self._strokes) == 1:
-            # Single rail - generate quad patch
             obj = patch_generator.generate_quad_patch(
                 stroke_points=self._strokes[0],
                 u_divisions=self.u_divisions,
@@ -185,9 +197,9 @@ class RAILFLOW_OT_draw(bpy.types.Operator):
                 self.report({'INFO'}, f"Single Rail: {len(obj.data.polygons)} faces")
 
         else:
-            # Multi rail - generate patch between strokes
             obj = patch_generator.generate_multi_rail_patch(
                 strokes=self._strokes,
+                u_divisions=self.u_divisions,
                 v_divisions=self.v_divisions,
                 source_obj=self._source_obj if self.snap_to_surface else None,
                 snap_to_surface=self.snap_to_surface
@@ -199,12 +211,10 @@ class RAILFLOW_OT_draw(bpy.types.Operator):
                 self.report({'INFO'}, f"Multi Rail ({len(self._strokes)} strokes): {len(obj.data.polygons)} faces")
 
     def draw_callback(self):
-        """Draw all strokes preview in viewport"""
         shader = gpu.shader.from_builtin('UNIFORM_COLOR')
         gpu.state.line_width_set(3.0)
         gpu.state.blend_set('ALPHA')
 
-        # Colors for different strokes
         colors = [
             (1.0, 0.5, 0.0, 0.8),  # Orange
             (0.0, 1.0, 0.5, 0.8),  # Green
@@ -212,7 +222,6 @@ class RAILFLOW_OT_draw(bpy.types.Operator):
             (1.0, 1.0, 0.0, 0.8),  # Yellow
         ]
 
-        # Draw saved strokes
         for i, stroke in enumerate(self._strokes):
             if len(stroke) >= 2:
                 color = colors[i % len(colors)]
@@ -222,233 +231,42 @@ class RAILFLOW_OT_draw(bpy.types.Operator):
                 shader.uniform_float("color", color)
                 batch.draw(shader)
 
-                # Draw points
                 gpu.state.point_size_set(8.0)
                 batch_points = batch_for_shader(shader, 'POINTS', {"pos": coords})
-                shader.uniform_float("color", (1.0, 1.0, 1.0, 1.0))  # White
+                shader.uniform_float("color", (1.0, 1.0, 1.0, 1.0))
                 batch_points.draw(shader)
 
-        # Draw current stroke being drawn
         if len(self._current_stroke) >= 2:
             coords = [tuple(p) for p in self._current_stroke]
             batch = batch_for_shader(shader, 'LINE_STRIP', {"pos": coords})
             shader.bind()
-            shader.uniform_float("color", (1.0, 0.0, 0.0, 0.9))  # Red for active
+            shader.uniform_float("color", (1.0, 0.0, 0.0, 0.9))
             batch.draw(shader)
 
             gpu.state.point_size_set(10.0)
             batch_points = batch_for_shader(shader, 'POINTS', {"pos": coords})
-            shader.uniform_float("color", (1.0, 1.0, 0.0, 1.0))  # Yellow
+            shader.uniform_float("color", (1.0, 1.0, 0.0, 1.0))
             batch_points.draw(shader)
 
-        # Reset state
         gpu.state.blend_set('NONE')
         gpu.state.line_width_set(1.0)
         gpu.state.point_size_set(1.0)
 
     def cleanup(self, context):
-        """Clean up handlers and state"""
         if self._draw_handler is not None:
             bpy.types.SpaceView3D.draw_handler_remove(self._draw_handler, 'WINDOW')
             self._draw_handler = None
 
-        # Clear active mode
         context.scene.railflow_settings.active_mode = 'NONE'
-
         context.area.header_text_set(None)
         self._strokes = []
         self._current_stroke = []
         self._is_drawing = False
 
 
-class RAILFLOW_OT_tube(bpy.types.Operator):
-    """Draw tube mesh along stroke"""
-    bl_idname = "railflow.tube"
-    bl_label = "Tube Draw"
-    bl_options = {'REGISTER', 'UNDO'}
-
-    segments: bpy.props.IntProperty(
-        name="Segments",
-        default=8,
-        min=3, max=32
-    )
-    v_divisions: bpy.props.IntProperty(
-        name="V Divisions",
-        default=8,
-        min=2, max=64
-    )
-    radius: bpy.props.FloatProperty(
-        name="Radius",
-        default=0.1,
-        min=0.001, max=10.0
-    )
-    adaptive_radius: bpy.props.BoolProperty(
-        name="Adaptive Radius",
-        default=False
-    )
-
-    _stroke_points = []
-    _is_drawing = False
-    _source_obj = None
-    _draw_handler = None
-
-    @classmethod
-    def poll(cls, context):
-        return context.area.type == 'VIEW_3D'
-
-    def invoke(self, context, event):
-        # Get source mesh from settings or active object
-        rf = context.scene.railflow_settings
-        if rf.source_mesh is not None:
-            self._source_obj = rf.source_mesh
-        elif context.active_object and context.active_object.type == 'MESH':
-            self._source_obj = context.active_object
-        else:
-            self.report({'WARNING'}, "Please set a source mesh first (click 'Set' button)")
-            return {'CANCELLED'}
-
-        # Set active mode
-        rf.active_mode = 'TUBE'
-
-        self._stroke_points = []
-        self._is_drawing = False
-
-        self._draw_handler = bpy.types.SpaceView3D.draw_handler_add(
-            self.draw_callback, (), 'WINDOW', 'POST_VIEW'
-        )
-
-        context.window_manager.modal_handler_add(self)
-        context.area.header_text_set("Tube Draw: LMB to draw, ENTER to confirm, ESC to cancel")
-
-        return {'RUNNING_MODAL'}
-
-    def modal(self, context, event):
-        context.area.tag_redraw()
-
-        if event.type == 'MOUSEMOVE':
-            if self._is_drawing:
-                point = self.get_surface_point(context, event)
-                if point is not None:
-                    if len(self._stroke_points) == 0:
-                        self._stroke_points.append(point)
-                    else:
-                        last_point = Vector(self._stroke_points[-1])
-                        if (Vector(point) - last_point).length > 0.01:
-                            self._stroke_points.append(point)
-
-        elif event.type == 'LEFTMOUSE':
-            if event.value == 'PRESS':
-                self._is_drawing = True
-                point = self.get_surface_point(context, event)
-                if point is not None:
-                    self._stroke_points.append(point)
-            elif event.value == 'RELEASE':
-                self._is_drawing = False
-                # Auto-generate mesh when release mouse
-                if len(self._stroke_points) >= 2:
-                    self.generate_mesh(context)
-                    self._stroke_points = []  # Clear for next stroke
-
-        elif event.type in {'RET', 'NUMPAD_ENTER'}:
-            self.cleanup(context)
-            return {'FINISHED'}
-
-        elif event.type == 'ESC':
-            self.cleanup(context)
-            return {'CANCELLED'}
-
-        elif event.type == 'RIGHTMOUSE' and event.value == 'PRESS':
-            self._stroke_points = []
-
-        return {'RUNNING_MODAL'}
-
-    def get_surface_point(self, context, event):
-        if self._source_obj is None:
-            return None
-
-        region = context.region
-        rv3d = context.region_data
-        coord = (event.mouse_region_x, event.mouse_region_y)
-
-        ray_origin = view3d_utils.region_2d_to_origin_3d(region, rv3d, coord)
-        ray_direction = view3d_utils.region_2d_to_vector_3d(region, rv3d, coord)
-
-        result = acceleration.raycast_mesh(self._source_obj, ray_origin, ray_direction)
-
-        if result is not None:
-            location, normal, index, distance = result
-            world_location = self._source_obj.matrix_world @ location
-            return world_location
-
-        return None
-
-    def generate_mesh(self, context):
-        if len(self._stroke_points) < 2:
-            return
-
-        obj = patch_generator.generate_tube(
-            stroke_points=self._stroke_points,
-            segments=self.segments,
-            v_divisions=self.v_divisions,
-            radius=self.radius,
-            source_obj=self._source_obj if self.adaptive_radius else None,
-            adaptive_radius=self.adaptive_radius
-        )
-
-        if obj is not None:
-            bpy.ops.object.select_all(action='DESELECT')
-            obj.select_set(True)
-            context.view_layer.objects.active = obj
-            self.report({'INFO'}, f"Created tube with {len(obj.data.polygons)} faces")
-
-    def draw_callback(self):
-        if len(self._stroke_points) < 2:
-            return
-
-        shader = gpu.shader.from_builtin('UNIFORM_COLOR')
-        gpu.state.line_width_set(3.0)
-        gpu.state.blend_set('ALPHA')
-
-        coords = [tuple(p) for p in self._stroke_points]
-        batch = batch_for_shader(shader, 'LINE_STRIP', {"pos": coords})
-
-        shader.bind()
-        shader.uniform_float("color", (0.0, 1.0, 0.5, 0.8))  # Cyan-green
-        batch.draw(shader)
-
-        gpu.state.point_size_set(8.0)
-        batch_points = batch_for_shader(shader, 'POINTS', {"pos": coords})
-        shader.uniform_float("color", (0.0, 1.0, 1.0, 1.0))  # Cyan
-        batch_points.draw(shader)
-
-        gpu.state.blend_set('NONE')
-        gpu.state.line_width_set(1.0)
-        gpu.state.point_size_set(1.0)
-
-    def cleanup(self, context):
-        if self._draw_handler is not None:
-            bpy.types.SpaceView3D.draw_handler_remove(self._draw_handler, 'WINDOW')
-            self._draw_handler = None
-
-        # Clear active mode
-        context.scene.railflow_settings.active_mode = 'NONE'
-
-        context.area.header_text_set(None)
-        self._stroke_points = []
-        self._is_drawing = False
-
-
-classes = [
-    RAILFLOW_OT_draw,
-    RAILFLOW_OT_tube,
-]
-
-
 def register():
-    for cls in classes:
-        bpy.utils.register_class(cls)
+    bpy.utils.register_class(RAILFLOW_OT_draw)
 
 
 def unregister():
-    for cls in reversed(classes):
-        bpy.utils.unregister_class(cls)
+    bpy.utils.unregister_class(RAILFLOW_OT_draw)
