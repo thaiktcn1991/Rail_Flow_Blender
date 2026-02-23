@@ -50,3 +50,44 @@
 - [x] Lưu trữ tài liệu kỹ thuật (V2 Interpolation) vào repo Maya (`docs/Futures`).
 - [x] Tái cấu trúc UI theo chuẩn Maya (Contextual Settings xuất hiện dưới nút Mode khi active).
 - [x] Sửa lỗi `AttributeError: generate_mesh` và kích hoạt hệ thống phát hiện lỗi Nitro (Try/Except) cấp tốc.
+
+---
+
+## [2026-02-23] - Hybrid CPOM Snap Revolution (V1.2)
+
+### 0. Debug Header
+- **Hệ điều hành**: Windows
+- **Phiên bản Blender**: 4.2 / 5.0
+- **Mục tiêu**: Port thuật toán Hybrid CPOM từ Maya V23.50-V23.53 để fix lỗi mesh không snap vào surface.
+
+### 1. Phát hiện Lỗi (The Discovery)
+- **Lỗi Snap Surface**: Single Rail mesh bay ra ngoài, không bám sát surface ở các vùng mép lồi (convex silhouette).
+- **Nguyên nhân**: Logic snap cũ (`smart_raycast_snap`) chỉ dùng bidirectional raycast đơn giản, thiếu:
+  - Normal Consistency check (Dot Product)
+  - Hybrid fallback với CPOM
+  - Projective Preservation
+- **Lỗi Crash Blender 5.0**: Icon `KEYINGSET_ADD` không tồn tại trong Blender 5.0 → crash khi reload addon.
+
+### 2. Giải pháp (The Solution)
+- **Port Hybrid CPOM từ Maya**:
+  1. **CPOM Fallback**: Luôn tìm closest point làm baseline
+  2. **Bidirectional Raycast**: Forward + Backward rays
+  3. **Normal Consistency (V23.51)**: Check dot product, phạt +1000 nếu back-face
+  4. **Projective Preservation (V23.52)**: Bonus -0.1 cho raycast results
+
+- **Files thay đổi**:
+  - `rf_core/acceleration.py`: Thêm hàm `hybrid_cpom_snap()`
+  - `rf_core/patch_generator.py`: Cập nhật `generate_quad_patch()`, `generate_multi_rail_patch()`, `generate_bridge_patch()` dùng hybrid snap
+  - `rf_ui/main_panel.py`: Fix icon `KEYINGSET_ADD` → `PREFERENCES`
+  - `rf_properties/settings.py`: Thêm `wire_thickness` property (điều chỉnh độ dày wireframe)
+
+### 3. Bài học (The Lesson)
+- **Maya Code là "Gold"**: Các thuật toán đã được tinh chỉnh qua nhiều version (V23.50-V23.53) nên port nguyên vẹn logic thay vì viết lại.
+- **Blender 5.0 Breaking Changes**: Icon names có thể thay đổi giữa các version, cần dùng icon phổ biến hoặc try-except.
+- **World Space vs Local Space**: Blender `ray_cast()` và `closest_point_on_mesh()` trả về local coordinates, phải transform về world space trước khi so sánh.
+
+### 4. Kết quả
+- [x] Port Hybrid CPOM snap logic
+- [x] Fix crash Blender 5.0 (icon deprecated)
+- [x] Thêm Wire Thickness slider (0.001 - 0.05)
+- [ ] Test Single Rail trên surface phức tạp

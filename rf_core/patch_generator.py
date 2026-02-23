@@ -100,14 +100,24 @@ def generate_quad_patch(stroke_points, u_divisions=4, v_divisions=8,
 
             # Snap to surface if enabled
             if snap_to_surface and source_obj is not None:
-                # Use RMF normal for projection direction to ensure smooth grid flow
-                # This prevents vertices from "sliding" towards geometric edges
-                result = acceleration.smart_raycast_snap(source_obj, vert_pos, normal)
+                # V1.2 HYBRID CPOM: Port từ Maya V23.50-V23.53
+                # Kết hợp Raycast + CPOM để khắc phục:
+                # - Convex Silhouette (mép lồi)
+                # - Back-Face Snap (mặt sau)
+                # - Concave Distortion (hố lõm)
+                result = acceleration.hybrid_cpom_snap(
+                    source_obj,
+                    vert_pos,
+                    projection_normal=normal,  # RMF normal
+                    max_distance=width * 3
+                )
                 if result is not None:
                     location, hit_norm, index, distance = result
-                    if distance < width * 2:  # Only snap if close enough
-                        # Apply surface offset to prevent Z-fighting
-                        vert_pos = location + hit_norm * 0.001
+                    # Apply surface offset to prevent Z-fighting
+                    # Transform location to world space
+                    world_loc = source_obj.matrix_world @ location
+                    world_norm = (source_obj.matrix_world.to_3x3() @ hit_norm).normalized()
+                    vert_pos = world_loc + world_norm * 0.001
 
             vertices.append(vert_pos)
 
@@ -227,23 +237,20 @@ def generate_multi_rail_patch(strokes, u_divisions=1, v_divisions=8,
 
             # Snap to surface if enabled
             if snap_to_surface and source_obj is not None:
-                # For Multi-Rail, we derive a "Projection Normal" by cross-product
-                # of the rail segment and the width segment (interpolation direction)
-                proj_dir = Vector((0, 0, 1)) # Fallback
+                # V1.2 HYBRID CPOM: Port từ Maya V23.50-V23.53
+                # Multi-Rail: Không có RMF normal, dùng CPOM để tự tìm projection direction
                 try:
-                    # p_a and p_b are still in scope if we organize the loop well, 
-                    # but since they aren't, let's just use Z-up or Closest Point Normal as fallback
-                    # In a high-quality port, we'd calculate the surface normal here.
-                    
-                    # For now, let's use the closest surface normal as the projection direction
-                    # to refine the position without sideways sliding.
-                    cp = acceleration.closest_point_on_mesh(source_obj, vert_pos)
-                    if cp:
-                        # Use the surface normal at the closest point for the projection ray
-                        location, hit_norm, idx, dist = cp
-                        result = acceleration.smart_raycast_snap(source_obj, vert_pos, hit_norm)
-                        if result:
-                            vert_pos = result[0] + result[1] * 0.001
+                    result = acceleration.hybrid_cpom_snap(
+                        source_obj,
+                        vert_pos,
+                        projection_normal=None,  # Let CPOM determine direction
+                        max_distance=2.0
+                    )
+                    if result:
+                        location, hit_norm, idx, dist = result
+                        world_loc = source_obj.matrix_world @ location
+                        world_norm = (source_obj.matrix_world.to_3x3() @ hit_norm).normalized()
+                        vert_pos = world_loc + world_norm * 0.001
                 except:
                     pass
 
@@ -541,11 +548,13 @@ def apply_style(obj, use_xray=True):
             
         mod.use_replace = False  # Keep original surface
         mod.material_offset = 1  # Use 2nd material (Wire)
-        # mod.thickness = 0.008    # x2 Thickness (8mm)
-        mod.thickness = 0.008
-        mod.use_even_offset = True 
+        # Get thickness from settings (default 0.008)
+        rf_settings = getattr(bpy.context.scene, "railflow_settings", None)
+        thickness = rf_settings.wire_thickness if rf_settings else 0.008
+        mod.thickness = thickness
+        mod.use_even_offset = True
         mod.use_boundary = True
-        mod.use_relative_offset = False # Absolute thickness
+        mod.use_relative_offset = True  # Relative to edge length (scales better)
             
     else:
         # Revert to standard
@@ -732,10 +741,18 @@ def generate_bridge_patch(source_obj_name, vertex_indices, stroke_points, u_divi
     for row in final_rows:
         for v in row:
             if snap_to_surface and source_surface_obj:
-                # Use acceleration to snap to surface
-                result = acceleration.smart_raycast_snap(source_surface_obj, v, Vector((0, 0, 1)))
+                # V1.2 HYBRID CPOM: Port từ Maya V23.50-V23.53
+                result = acceleration.hybrid_cpom_snap(
+                    source_surface_obj,
+                    v,
+                    projection_normal=None,  # Let CPOM determine direction
+                    max_distance=2.0
+                )
                 if result:
-                    v = result[0] + result[1] * 0.001
+                    location, hit_norm, idx, dist = result
+                    world_loc = source_surface_obj.matrix_world @ location
+                    world_norm = (source_surface_obj.matrix_world.to_3x3() @ hit_norm).normalized()
+                    v = world_loc + world_norm * 0.001
             vertices.append(v)
             
     faces = []

@@ -192,7 +192,12 @@ class RAILFLOW_PT_settings(bpy.types.Panel):
         row = layout.row(align=True)
         row.prop(rf, "use_xray", text="", icon='XRAY', toggle=True)
         row.prop(rf, "show_hotkey_on_button", text="", icon='TEXT')
-        row.prop(rf, "enable_hotkey", text="", icon='KEYINGSET_ADD')
+        row.prop(rf, "enable_hotkey", text="", icon='PREFERENCES')
+
+        # Wire thickness slider (only show when X-Ray is enabled)
+        if rf.use_xray:
+            row = layout.row(align=True)
+            row.prop(rf, "wire_thickness", text="Wire")
 
 # ============================================
 # SYMMETRY
@@ -327,7 +332,7 @@ class RAILFLOW_PT_mesh_operations(bpy.types.Panel):
             b_col.prop(rf, "bridge_poly_along_stroke", text="Poly Along Stroke")
 
         # --- Quaddraw ---
-        op = col.operator("railflow.draw", text="Quaddraw", icon='FACESEL_HLMT',
+        op = col.operator("railflow.draw", text="Quaddraw", icon='MESH_GRID',
                     depress=rf.active_mode == 'QUADDRAW')
         if op:
             op.mode = 'QUADDRAW'

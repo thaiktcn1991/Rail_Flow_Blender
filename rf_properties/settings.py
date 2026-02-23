@@ -54,6 +54,16 @@ def update_xray_callback(self, context):
         patch_generator.apply_style(context.active_object, self.use_xray)
 
 
+def update_wire_thickness_callback(self, context):
+    """Callback to update wire thickness on all Rail Flow meshes"""
+    for obj in bpy.data.objects:
+        if obj.type == 'MESH' and "type" in obj:
+            # Check if it's a Rail Flow mesh
+            mod = obj.modifiers.get("RailFlow_ThickWire")
+            if mod:
+                mod.thickness = self.wire_thickness
+
+
 
 
 
@@ -75,6 +85,15 @@ class RailFlowSettings(bpy.types.PropertyGroup):
         description="Show retopo mesh in front of source",
         default=True,
         update=update_xray_callback
+    )
+    wire_thickness: bpy.props.FloatProperty(
+        name="Wire Thickness",
+        description="Thickness of wireframe lines (in Blender units)",
+        default=0.008,
+        min=0.001, max=0.05,
+        step=1,
+        precision=3,
+        update=update_wire_thickness_callback
     )
     show_hotkey_on_button: bpy.props.BoolProperty(
         name="Show Hotkey on Button",
